@@ -2,10 +2,16 @@
 
 <head>
   <style>
+    body {
+      margin: 12px 0 12px 16px;
+      padding: 0;
+    }
+
     #player {
       position: relative;
       width: 100%;
       aspect-ratio: 16 / 9;
+      margin-bottom: 8px;
     }
 
     #player video {
@@ -16,60 +22,132 @@
       object-fit: contain;
       pointer-events: none;
     }
+
+    fieldset {
+      margin: 10px 0;
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #fafafa;
+    }
+
+    fieldset>div {
+      margin: 4px 0;
+      padding: 2px 0;
+    }
+
+    legend {
+      padding: 0 6px;
+    }
+
+    label {
+      margin-right: 4px;
+    }
+
+    label input[type="checkbox"] {
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    .row {
+      margin: 4px 0;
+      padding: 2px 0;
+    }
   </style>
 </head>
 
-<span style="background-color: lightgray;">http://100.76.9.53:7500 tailscale etc, no trailing slash</span>
+<div class="row"><span style="background-color: lightgray; padding: 2px 6px;">http://100.76.9.53:7500 tailscale etc, no
+    trailing slash</span></div>
 <div id="player">
   <canvas id="freezeFrame" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
   <video id="vd0"></video>
   <video id="vd1"></video>
 </div>
-<label><input type="checkbox" id="dg">debug level log</label>
-<input type="text" id="url" value="http://100.76.9.53:7500" onchange="localStorage.setItem('url', this.value)"
-  style="width:100%" /><button onclick="main()" style="zoom:3;">start</button>
+
+<fieldset>
+  <legend><b>Rate monitor</b></legend>
+  <label><input type="checkbox" id="rateMonitorEnabled"
+      onchange="localStorage.setItem('rateMonitorEnabled', this.checked); toggleRateMonitor();">show live playbackRate
+    (independent poll)</label>
+  <div class="row" id="rateMonitorRow" style="display:none;">
+    <label>poll interval (ms): <input type="number" id="rateMonitorInterval" value="5" min="1" step="1"
+        style="width:5em"
+        onchange="localStorage.setItem('rateMonitorInterval', this.value); restartRateMonitor();"></label>
+    <input type="text" id="rateMonitorOutput" readonly
+      style="width:100%;font-family:monospace;margin-top:4px;background:#eee;border:1px solid #ccc;padding:3px 6px;"
+      value="not running" />
+    <span style="color:gray;">reads video.playbackRate + video.currentTime straight off the active &lt;video&gt; element
+      on its own timer, separate from the ramp/smoothing logic, so you can see if the actual rate is jerky.</span>
+  </div>
+</fieldset>
+
+<div class="row"><label><input type="checkbox" id="dg">debug level log</label></div>
+<div class="row">
+  <input type="text" id="url" value="http://100.76.9.53:7500" onchange="localStorage.setItem('url', this.value)"
+    style="width:100%" /><button onclick="main()" style="zoom:3;">start</button>
+</div>
 
 <fieldset>
   <legend><b>Restart</b></legend>
-  <button onclick="restartServer()">restart server now</button>
-  <label><input type="checkbox" id="autoRestart" onchange="localStorage.setItem('autoRestart', this.checked)">
-    auto-restart server if stalled</label>
-  <label>stall timeout (s): <input type="number" id="restartTimeout" value="4" step="0.5" style="width:5em"
-      onchange="localStorage.setItem('restartTimeout', this.value)"></label>
-  <span id="stallStatus" style="font-family:monospace;"></span>
+  <div class="row"><button onclick="restartServer()">restart server now</button></div>
+  <div class="row"><label><input type="checkbox" id="autoRestart"
+        onchange="localStorage.setItem('autoRestart', this.checked)">auto-restart server if stalled</label></div>
+  <div class="row">
+    <label>stall timeout (s): <input type="number" id="restartTimeout" value="4" step="0.5" style="width:5em"
+        onchange="localStorage.setItem('restartTimeout', this.value)"></label>
+    <span id="stallStatus" style="font-family:monospace;"></span>
+  </div>
 </fieldset>
 
 <fieldset>
   <legend><b>Startup</b></legend>
-  <label>start this many segments behind live frontier: <input type="number" id="startupBuffer" value="0" min="0"
-      style="width:5em" onchange="localStorage.setItem('startupBuffer', this.value)"></label>
-  <span style="color:gray;">0 = start at the newest ready segment (old behavior). Higher = safer/more delay.</span>
+  <div class="row">
+    <label>start this many segments behind live frontier: <input type="number" id="startupBuffer" value="0" min="0"
+        style="width:5em" onchange="localStorage.setItem('startupBuffer', this.value)"></label>
+    <span style="color:gray;">0 = start at the newest ready segment (old behavior). Higher = safer/more delay.</span>
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend><b>Profiles</b></legend>
+  <div class="row">
+    <label>profile: <select id="profileSelect" style="min-width:10em"></select></label>
+    <button onclick="loadSelectedProfile()">load</button>
+    <button onclick="saveAsNewProfile()">save as new...</button>
+    <button onclick="overwriteSelectedProfile()">save (overwrite)</button>
+    <button onclick="deleteSelectedProfile()">delete</button>
+  </div>
+  <div class="row">
+    <button onclick="exportSettingsAsJson()">export current settings (.txt / JSON)</button>
+    <span style="color:gray;">dumps every UI setting currently in localStorage to a downloadable .txt file (JSON
+      format). No live values applied, everything reads from localStorage only.</span>
+  </div>
 </fieldset>
 
 <fieldset>
   <legend><b>Playback / rate-control tuning</b></legend>
 
-  <div>
+  <div class="row">
     <label>swap timeout (ms): <input type="number" id="swapTimeout" value="1000" style="width:6em"
         onchange="localStorage.setItem('swapTimeout', this.value)"></label>
     <span style="color:gray;">max time to wait for the next segment to be ready before forcing the swap anyway</span>
   </div>
 
-  <div>
+  <div class="row">
     <label>early swap margin (ms): <input type="number" id="earlySwapMs" value="80" style="width:6em"
         onchange="localStorage.setItem('earlySwapMs', this.value)"></label>
     <span style="color:gray;">if next segment is already buffered, hand off this many ms before the current segment
       would naturally end</span>
   </div>
 
-  <div>
+  <div class="row">
     <label>crossfade on swap (ms): <input type="number" id="crossfadeMs" value="0" min="0" style="width:6em"
         onchange="localStorage.setItem('crossfadeMs', this.value)"></label>
     <span style="color:gray;">0 = hard cut. >0 = fade opacity between segments. Safe now that the persistent
       background canvas covers any gap underneath.</span>
   </div>
 
-  <div>
+  <div class="row">
     <label>min rate: <input type="text" id="minRate" value="0.4" style="width:4em"
         onchange="localStorage.setItem('minRate', this.value)"></label>
     <label>max rate: <input type="text" id="maxRate" value="4" style="width:4em"
@@ -77,7 +155,7 @@
     <span style="color:gray;">rate range the controller is allowed to choose between</span>
   </div>
 
-  <div>
+  <div class="row">
     <label>slow trigger bias: <input type="text" id="slowTriggerBias" value="1.5" style="width:4em"
         onchange="localStorage.setItem('slowTriggerBias', this.value)"></label>
     <label>slow ramp bias: <input type="text" id="slowRampBias" value="1.5" style="width:4em"
@@ -85,7 +163,7 @@
     <span style="color:gray;">trigger: >1 = starts slowing down earlier in the segment. ramp: >1 = reaches the slow
       target faster once triggered.</span>
   </div>
-  <div>
+  <div class="row">
     <label>fast trigger bias: <input type="text" id="fastTriggerBias" value="0.6" style="width:4em"
         onchange="localStorage.setItem('fastTriggerBias', this.value)"></label>
     <label>fast ramp bias: <input type="text" id="fastRampBias" value="0.5" style="width:4em"
@@ -94,14 +172,14 @@
       takes longer to actually reach the speed-up target.</span>
   </div>
 
-  <div>
+  <div class="row">
     <label>target smoothing step (per 50ms tick): <input type="number" id="targetSmoothingStep" value="0.15" step="0.01"
         style="width:5em" onchange="localStorage.setItem('targetSmoothingStep', this.value)"></label>
     <span style="color:gray;">low-pass filter on the desired-rate target itself. Lower = smoother/slower to react,
       higher = snappier/more jumpy.</span>
   </div>
 
-  <div>
+  <div class="row">
     <label>ramp step (playbackRate change per tick): <input type="number" id="rampStep" value="0.05" step="0.01"
         style="width:5em" onchange="localStorage.setItem('rampStep', this.value)"></label>
     <label>ramp interval (ms): <input type="number" id="rampInterval" value="50" step="10" style="width:5em"
@@ -109,20 +187,20 @@
     <span style="color:gray;">how fast the *actual* video.playbackRate chases the smoothed target</span>
   </div>
 
-  <div>
+  <div class="row">
     <label>control loop poll interval (ms): <input type="number" id="pollInterval" value="50" step="10"
         style="width:5em" onchange="localStorage.setItem('pollInterval', this.value)"></label>
     <span style="color:gray;">how often we check /state and recompute urgency/rate</span>
   </div>
 
-  <div>
+  <div class="row">
     <label>segment duration (s): <input type="number" id="segmentDuration" value="1" step="0.1" style="width:5em"
         onchange="localStorage.setItem('segmentDuration', this.value)"></label>
     <span style="color:gray;">expected length of one segment. Used to compute urgency (% of segment played so far).
       Set this to match your server's actual segment length.</span>
   </div>
 
-  <div>
+  <div class="row">
     <label>urgency curve: <select id="urgencyCurve" onchange="localStorage.setItem('urgencyCurve', this.value)">
         <option value="linear">linear</option>
         <option value="quadratic">quadratic (ease into slowdown, then drop fast)</option>
@@ -239,6 +317,186 @@
   fastTriggerBiasInput.value = localStorage.getItem("fastTriggerBias") || fastTriggerBiasInput.value;
   const fastRampBiasInput = document.getElementById("fastRampBias");
   fastRampBiasInput.value = localStorage.getItem("fastRampBias") || fastRampBiasInput.value;
+
+  const rateMonitorEnabledInput = document.getElementById("rateMonitorEnabled");
+  rateMonitorEnabledInput.checked = localStorage.getItem("rateMonitorEnabled") === "true";
+  const rateMonitorIntervalInput = document.getElementById("rateMonitorInterval");
+  rateMonitorIntervalInput.value = localStorage.getItem("rateMonitorInterval") || rateMonitorIntervalInput.value;
+
+  ////////////////////
+  // SETTINGS / PROFILES
+  ////////////////////
+
+  // every localStorage key that represents a UI setting, so profile
+  // save/load and JSON export always touch the same complete list.
+  const SETTINGS_KEYS = [
+    "url", "dg", "autoRestart", "restartTimeout", "startupBuffer",
+    "swapTimeout", "earlySwapMs", "crossfadeMs", "minRate", "maxRate",
+    "slowTriggerBias", "slowRampBias", "fastTriggerBias", "fastRampBias",
+    "targetSmoothingStep", "rampStep", "rampInterval", "pollInterval",
+    "segmentDuration", "urgencyCurve", "rateMonitorEnabled", "rateMonitorInterval"
+  ];
+
+  const CHECKBOX_KEYS = new Set(["dg", "autoRestart", "rateMonitorEnabled"]);
+
+  function readCurrentSettings() {
+    const out = {};
+    for (const key of SETTINGS_KEYS) {
+      const el = document.getElementById(key);
+      if (!el) continue;
+      out[key] = CHECKBOX_KEYS.has(key) ? el.checked : el.value;
+    }
+    return out;
+  }
+
+  function applySettingsToUi(settings) {
+    for (const key of SETTINGS_KEYS) {
+      if (!(key in settings)) continue;
+      const el = document.getElementById(key);
+      if (!el) continue;
+      if (CHECKBOX_KEYS.has(key)) {
+        el.checked = !!settings[key];
+      } else {
+        el.value = settings[key];
+      }
+    }
+  }
+
+  function persistSettingsToLocalStorage(settings) {
+    for (const key of SETTINGS_KEYS) {
+      if (!(key in settings)) continue;
+      localStorage.setItem(key, CHECKBOX_KEYS.has(key) ? String(!!settings[key]) : settings[key]);
+    }
+  }
+
+  const PROFILES_KEY = "profiles_v1";
+  const ACTIVE_PROFILE_KEY = "activeProfile_v1";
+
+  function loadProfilesStore() {
+    try {
+      const raw = localStorage.getItem(PROFILES_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      log('failed to parse profiles store', String(e));
+      return {};
+    }
+  }
+
+  function saveProfilesStore(store) {
+    localStorage.setItem(PROFILES_KEY, JSON.stringify(store));
+  }
+
+  function refreshProfileDropdown(selectName) {
+    const store = loadProfilesStore();
+    const sel = document.getElementById("profileSelect");
+    const names = Object.keys(store).sort();
+    sel.innerHTML = "";
+    for (const name of names) {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      sel.appendChild(opt);
+    }
+    const active = selectName || localStorage.getItem(ACTIVE_PROFILE_KEY);
+    if (active && names.includes(active)) sel.value = active;
+  }
+
+  function saveAsNewProfile() {
+    const name = prompt("Profile name:");
+    if (!name) return;
+    const store = loadProfilesStore();
+    if (store[name] && !confirm(`Profile "${name}" already exists. Overwrite?`)) return;
+    store[name] = readCurrentSettings();
+    saveProfilesStore(store);
+    localStorage.setItem(ACTIVE_PROFILE_KEY, name);
+    refreshProfileDropdown(name);
+    log('saved new profile', name);
+  }
+
+  function overwriteSelectedProfile() {
+    const sel = document.getElementById("profileSelect");
+    const name = sel.value;
+    if (!name) { alert("No profile selected."); return; }
+    const store = loadProfilesStore();
+    store[name] = readCurrentSettings();
+    saveProfilesStore(store);
+    log('overwrote profile', name);
+  }
+
+  function loadSelectedProfile() {
+    const sel = document.getElementById("profileSelect");
+    const name = sel.value;
+    if (!name) { alert("No profile selected."); return; }
+    const store = loadProfilesStore();
+    if (!store[name]) { alert(`Profile "${name}" not found.`); return; }
+    applySettingsToUi(store[name]);
+    persistSettingsToLocalStorage(store[name]);
+    localStorage.setItem(ACTIVE_PROFILE_KEY, name);
+    BASE_URL = document.getElementById("url").value;
+    toggleRateMonitor();
+    log('loaded profile', name);
+  }
+
+  function deleteSelectedProfile() {
+    const sel = document.getElementById("profileSelect");
+    const name = sel.value;
+    if (!name) return;
+    if (!confirm(`Delete profile "${name}"?`)) return;
+    const store = loadProfilesStore();
+    delete store[name];
+    saveProfilesStore(store);
+    refreshProfileDropdown();
+    log('deleted profile', name);
+  }
+
+  function exportSettingsAsJson() {
+    const settings = readCurrentSettings();
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      settings
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `settings_${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    log('exported settings as JSON txt');
+  }
+
+  ////////////////////
+  // LIVE RATE MONITOR (independent of ramp/control loop)
+  ////////////////////
+  let rateMonitorTimerId = null;
+
+  function pollRateMonitorOnce() {
+    const out = document.getElementById("rateMonitorOutput");
+    if (!currentVideoHandle || !currentVideoHandle.video) {
+      out.value = "no active video yet";
+      return;
+    }
+    const v = currentVideoHandle.video;
+    const now = performance.now();
+    out.value = `rate=${v.playbackRate.toFixed(4)}x  t=${v.currentTime.toFixed(4)}s  clock=${now.toFixed(1)}ms`;
+  }
+
+  function restartRateMonitor() {
+    if (rateMonitorTimerId) clearInterval(rateMonitorTimerId);
+    if (!document.getElementById("rateMonitorEnabled").checked) return;
+    const interval = Math.max(1, parseFloat(document.getElementById("rateMonitorInterval").value) || 5);
+    rateMonitorTimerId = setInterval(pollRateMonitorOnce, interval);
+  }
+
+  function toggleRateMonitor() {
+    const enabled = document.getElementById("rateMonitorEnabled").checked;
+    document.getElementById("rateMonitorRow").style.display = enabled ? "" : "none";
+    if (enabled) {
+      restartRateMonitor();
+    } else if (rateMonitorTimerId) {
+      clearInterval(rateMonitorTimerId);
+      rateMonitorTimerId = null;
+    }
+  }
 
   // 100.76.9.53 or hotspot ip etc
   let BASE_URL = document.getElementById("url").value;
@@ -360,15 +618,6 @@
     return `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
   }
 
-  ////////////////////////////////////////////////////////////////////////
-  // loadIntoElement: THE single reusable "get segment N ready on this
-  // exact <video> element" function. Both the live-swap path (playVideo)
-  // and the buffering path (bufferNext) call this SAME function, so
-  // there's one place that knows how to load a segment, not two versions
-  // that can silently drift apart. Resolves once the element is actually
-  // ready to play (readyState based -- doesn't rely on oncanplay possibly
-  // having already fired before we started listening).
-  ////////////////////////////////////////////////////////////////////////
   function loadIntoElement(el, number) {
     return new Promise(resolve => {
       el.src = segmentUrl(number);
@@ -379,12 +628,6 @@
         if (done) return;
         done = true;
         clearInterval(pollId);
-        // paint this element's frame onto the persistent background
-        // canvas the instant it's confirmed ready -- readyState>=3/
-        // oncanplay both guarantee a real decoded frame exists here.
-        // This canvas sits behind both <video> elements at all times,
-        // so there's no toggle/timing race: whichever frame was most
-        // recently captured is always what shows through any gap.
         try {
           const freeze = document.getElementById("freezeFrame");
           freeze.width = el.videoWidth || el.clientWidth;
@@ -398,17 +641,13 @@
 
       el.oncanplay = finish;
       const pollId = setInterval(() => {
-        if (el.readyState >= 3) finish(); // HAVE_FUTURE_DATA or better
+        if (el.readyState >= 3) finish();
       }, 50);
     });
   }
 
-  // bufferedNext: { number, video } where video is one of vids[0]/vids[1]
-  // that already has segment `number` loaded via loadIntoElement.
   let bufferedNext = null;
 
-  // carryRate: the rate the *previous* segment was actually running at when
-  // it ended. Passed in so the new segment starts there instead of 1x.
   function playVideo(number, carryRate = 1) {
     log(`Playing video segment ${number}`, currentVideoHandle, 'carryRate=', carryRate);
     logI(`Playing segment ${number}`);
@@ -417,8 +656,6 @@
     const idle = vids[idleIdx];
     const active = vids[activeIdx];
 
-    // reuse the buffered load if it's sitting in the right slot already,
-    // otherwise start a fresh load -- same function either way.
     const alreadyBuffered = bufferedNext && bufferedNext.number === number && bufferedNext.video === idle;
     if (bufferedNext && !alreadyBuffered) {
       log('dropping stale bufferedNext', bufferedNext.number, 'wanted', number);
@@ -447,10 +684,6 @@
 
       const reveal = () => {
         if (crossfadeMs > 0) {
-          // both elements are visible during the fade -- the persistent
-          // background canvas is behind both, so there's no gap even
-          // mid-transition. idle starts at opacity 0 so it eases in
-          // instead of hard-cutting.
           idle.style.opacity = 0;
           idle.style.transition = `opacity ${crossfadeMs}ms linear`;
           active.style.transition = `opacity ${crossfadeMs}ms linear`;
@@ -473,16 +706,9 @@
         }
       };
 
-      // don't reveal until the element has actually started producing
-      // frames -- calling play() and immediately flipping display can
-      // show one stale/blank paused frame first, which is the flash.
-      // the persistent background canvas (always behind both videos,
-      // continuously updated in loadIntoElement) covers this gap.
       idle.onplaying = () => { idle.onplaying = null; reveal(); };
       const p = idle.play();
       if (p && p.catch) p.catch(e => log('play() rejected', String(e)));
-      // fallback: some browsers/elements may not fire 'playing' reliably
-      // (e.g. already-playing edge cases) -- reveal shortly after anyway
       setTimeout(() => { if (idle.onplaying) { idle.onplaying = null; reveal(); } }, 150);
 
       activeIdx = idleIdx;
@@ -518,19 +744,11 @@
       video: idle,
       setSpeed(rate) { targetRate = rate; },
       getCurrentRate() { return idle.playbackRate; },
-      // early swap: fire the exact same onended path early, so main()'s
-      // loop picks it up identically -- just without waiting for the
-      // segment to actually end.
       endEarly() {
         if (idle.onended) idle.onended();
       },
-      // Buffer segment `number` into the slot that will be free for the
-      // NEXT swap. Right now `idle` (this handle's own video) is about to
-      // become active; `active` (today's active) is what's about to be
-      // freed once this segment finishes -- so that's the slot to preload
-      // into. Reuses loadIntoElement, same as playVideo does.
       async bufferNext(number) {
-        const freeSoonEl = active; // becomes idle once THIS segment ends
+        const freeSoonEl = active;
         await loadIntoElement(freeSoonEl, number);
         bufferedNext = { number, video: freeSoonEl };
         log('buffered segment', number, 'into slot');
@@ -599,22 +817,17 @@
 
     let desiredRate;
     if (ready) {
-      // next is ready -- fastTriggerBias controls how eagerly we ask for
-      // speed-up right away (< 1 = ease in, don't slam to maxRate).
       const fastTriggerBias = getFastTriggerBias();
       const maxRate = getMaxRate();
       desiredRate = 1.0 + (maxRate - 1.0) * fastTriggerBias;
       logD(`Next segment ${next} is ready, desired rate ${desiredRate.toFixed(2)} (fastTriggerBias=${fastTriggerBias})`);
     } else {
-      // next not ready -- slowTriggerBias warps urgency so slow-down
-      // triggers earlier (>1) in the segment.
       const slowTriggerBias = getSlowTriggerBias();
       const biasedUrgency = Math.min(1, urgency * slowTriggerBias);
       desiredRate = urgencyToRate(biasedUrgency, getMinRate(), curve);
       logD(`Next segment ${next} is not ready, urgency=${urgency.toFixed(2)} (biased ${biasedUrgency.toFixed(2)}), desired rate=${desiredRate.toFixed(2)}`);
     }
 
-    // ramp bias: how fast smoothedTarget chases desiredRate, split by direction.
     const baseSmoothStep = getTargetSmoothingStep();
     const movingDown = desiredRate < smoothedTarget;
     const smoothStep = baseSmoothStep * (movingDown ? getSlowRampBias() : getFastRampBias());
@@ -634,9 +847,6 @@
     document.getElementById("statDesired").textContent = desiredRate.toFixed(3) + "x";
     document.getElementById("statSmoothed").textContent = smoothedTarget.toFixed(3) + "x";
 
-    // early swap: if next segment is already buffered, don't wait for
-    // natural 'ended' -- hand off `earlySwapMs` before this segment would
-    // finish, to avoid the last-moment stutter.
     const earlySwapMs = getEarlySwapMs();
     const remainingMs = (getSegmentDuration() - currentVideoHandle.video.currentTime) * 1000;
     if (bufferedNext && remainingMs <= earlySwapMs && remainingMs > -500) {
@@ -720,6 +930,9 @@
       log('eval request failed', String(e));
     }
   }
+
+  refreshProfileDropdown();
+  toggleRateMonitor();
 
   log("test log");
   log("test log 2");
