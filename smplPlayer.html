@@ -132,38 +132,14 @@
     return segments.find(s => s.id === id)?.status;
   }
 
-  // Server now reports 4 real statuses: "ready", "downloading", "pending",
-  // "dead". Only "dead" (and truly unknown ids the server has never heard of,
-  // which show up as undefined) should be skipped past. "downloading" and
-  // "pending" mean the server is actively still trying — wait, don't skip.
-  function isSkippable(status) {
-    return status === "dead" || status === undefined;
-  }
-
   async function getNextValidNumber(currentNumber) {
     const { segments } = await getApi();
 
     let next = currentNumber + 1;
-    const skipped = [];
 
-    while (isSkippable(findStatusById(segments, next))) {
-      skipped.push(next);
-      next++;
-    }
+    while (findStatusById(segments, next) === "dead") next++;
 
-    if (skipped.length) {
-      logD(`Skipped dead/unknown segments: ${skipped.join(", ")}`);
-    }
-
-    const status = findStatusById(segments, next);
-    if (status === "ready") return next;
-
-    // next exists but isn't ready yet (downloading/pending) — wait on it,
-    // don't skip past it.
-    if (status === "downloading" || status === "pending") {
-      logD(`Waiting on segment ${next} (status: ${status})`);
-    }
-    return null;
+    return findStatusById(segments, next) === "ready" ? next : null;
   }
 
   async function getLatestNumber() {
@@ -263,18 +239,17 @@
     const { segments } = await getApi();
 
     let next = currentVideoHandle.currtlyPlayingVideoNumber + 1;
-    while (isSkippable(findStatusById(segments, next))) next++;
+    while (findStatusById(segments, next) === "dead") next++;
 
-    const status = findStatusById(segments, next);
-    const ready = status === "ready";
+    const ready = findStatusById(segments, next) === "ready";
     if (ready) {
       logD(`Next segment ${next} is ready, speeding up playback`);
       logI(`Speed target: ${getMaxRate()}x (next ready)`);
       currentVideoHandle.setSpeed(getMaxRate());
     }
     else {
-      logD(`Next segment ${next} is not ready (status: ${status}), slowing down playback`);
-      logI(`Speed target: ${getMinRate()}x (next: ${status || "unseen"})`);
+      logD(`Next segment ${next} is not ready, slowing down playback`);
+      logI(`Speed target: ${getMinRate()}x (next not ready)`);
       currentVideoHandle.setSpeed(getMinRate());
     }
   }
