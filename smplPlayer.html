@@ -697,6 +697,14 @@
         lastFrontierWaitLogMs = 0;
       }
 
+      const skipped =
+        nextValidNumber > currentVideoHandle.currtlyPlayingVideoNumber + 1;
+
+      if (skipped) {
+        carryRate = 1;
+        smoothedTarget = 1;
+      }
+
       currentVideoHandle = playVideo(nextValidNumber, carryRate);
 
       startSetintervalLoopSlowdown(currentVideoHandle);
