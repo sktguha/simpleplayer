@@ -44,12 +44,19 @@
       margin-right: 4px;
     }
 
-    label input[type="checkbox"] {
+    input[type="checkbox"] {
       margin-right: 6px;
+      vertical-align: middle;
+      cursor: pointer;
+    }
+
+    input[type="checkbox"]+label {
+      cursor: pointer;
       vertical-align: middle;
     }
 
     .row {
+      display: block;
       margin: 4px 0;
       padding: 2px 0;
     }
@@ -66,37 +73,49 @@
 
 <fieldset>
   <legend><b>Rate monitor</b></legend>
-  <label><input type="checkbox" id="rateMonitorEnabled"
-      onchange="localStorage.setItem('rateMonitorEnabled', this.checked); toggleRateMonitor();">show live playbackRate
-    (independent poll)</label>
-  <div class="row" id="rateMonitorRow" style="display:none;">
-    <label>poll interval (ms): <input type="number" id="rateMonitorInterval" value="5" min="1" step="1"
-        style="width:5em"
-        onchange="localStorage.setItem('rateMonitorInterval', this.value); restartRateMonitor();"></label>
-    <input type="text" id="rateMonitorOutput" readonly
-      style="width:100%;font-family:monospace;margin-top:4px;background:#eee;border:1px solid #ccc;padding:3px 6px;"
-      value="not running" />
-    <span style="color:gray;">reads video.playbackRate + video.currentTime straight off the active &lt;video&gt; element
-      on its own timer, separate from the ramp/smoothing logic, so you can see if the actual rate is jerky.</span>
+  <div class="row"><input type="checkbox" id="rateMonitorEnabled"
+      onchange="localStorage.setItem('rateMonitorEnabled', this.checked); toggleRateMonitor();"><label
+      for="rateMonitorEnabled">show live playbackRate (independent poll)</label></div>
+  <div id="rateMonitorRow" style="display:none;">
+    <div class="row"><label for="rateMonitorInterval">poll interval (ms):</label> <input type="number"
+        id="rateMonitorInterval" value="5" min="1" step="1" style="width:5em"
+        onchange="localStorage.setItem('rateMonitorInterval', this.value); restartRateMonitor();"></div>
+    <div class="row"><label for="rateMonitorHistoryLen">history lines kept:</label> <input type="number"
+        id="rateMonitorHistoryLen" value="200" min="10" step="10" style="width:5em"
+        onchange="localStorage.setItem('rateMonitorHistoryLen', this.value);"></div>
+    <div class="row"><button onclick="clearRateMonitorLog()">clear</button></div>
+    <div class="row"><button onclick="downloadRateMonitorLog()">download</button></div>
+    <div class="row">
+      <textarea id="rateMonitorOutput" readonly
+        style="width:100%;height:8em;font-family:monospace;background:#eee;border:1px solid #ccc;padding:3px 6px;"
+        placeholder="rate history will appear here once monitoring starts"></textarea>
+    </div>
+    <div class="row"><span style="color:gray;">reads video.playbackRate + video.currentTime straight off the active
+        &lt;video&gt; element on its own timer, separate from the ramp/smoothing logic, so you can see if the actual
+        rate is jerky. newest line at the bottom.</span></div>
   </div>
 </fieldset>
 
-<div class="row"><label><input type="checkbox" id="dg">debug level log</label></div>
+<div class="row"><input type="checkbox" id="dg"><label for="dg">debug level log</label></div>
 <div class="row">
   <input type="text" id="url" value="http://100.76.9.53:7500" onchange="localStorage.setItem('url', this.value)"
-    style="width:100%" /><button onclick="main()" style="zoom:3;">start</button>
+    style="width:100%" />
+</div>
+<div class="row">
+  <button onclick="main()" style="zoom:3;">start</button>
 </div>
 
 <fieldset>
   <legend><b>Restart</b></legend>
   <div class="row"><button onclick="restartServer()">restart server now</button></div>
-  <div class="row"><label><input type="checkbox" id="autoRestart"
-        onchange="localStorage.setItem('autoRestart', this.checked)">auto-restart server if stalled</label></div>
+  <div class="row"><input type="checkbox" id="autoRestart"
+      onchange="localStorage.setItem('autoRestart', this.checked)"><label for="autoRestart">auto-restart server if
+      stalled</label></div>
   <div class="row">
     <label>stall timeout (s): <input type="number" id="restartTimeout" value="4" step="0.5" style="width:5em"
         onchange="localStorage.setItem('restartTimeout', this.value)"></label>
-    <span id="stallStatus" style="font-family:monospace;"></span>
   </div>
+  <div class="row"><span id="stallStatus" style="font-family:monospace;"></span></div>
 </fieldset>
 
 <fieldset>
@@ -110,18 +129,16 @@
 
 <fieldset>
   <legend><b>Profiles</b></legend>
-  <div class="row">
-    <label>profile: <select id="profileSelect" style="min-width:10em"></select></label>
-    <button onclick="loadSelectedProfile()">load</button>
-    <button onclick="saveAsNewProfile()">save as new...</button>
-    <button onclick="overwriteSelectedProfile()">save (overwrite)</button>
-    <button onclick="deleteSelectedProfile()">delete</button>
-  </div>
+  <div class="row"><label>profile: <select id="profileSelect" style="min-width:10em"></select></label></div>
+  <div class="row"><button onclick="loadSelectedProfile()">load</button></div>
+  <div class="row"><button onclick="saveAsNewProfile()">save as new...</button></div>
+  <div class="row"><button onclick="overwriteSelectedProfile()">save (overwrite)</button></div>
+  <div class="row"><button onclick="deleteSelectedProfile()">delete</button></div>
   <div class="row">
     <button onclick="exportSettingsAsJson()">export current settings (.txt / JSON)</button>
-    <span style="color:gray;">dumps every UI setting currently in localStorage to a downloadable .txt file (JSON
-      format). No live values applied, everything reads from localStorage only.</span>
   </div>
+  <div class="row"><span style="color:gray;">dumps every UI setting currently in localStorage to a downloadable .txt
+      file (JSON format). No live values applied, everything reads from localStorage only.</span></div>
 </fieldset>
 
 <fieldset>
@@ -150,26 +167,37 @@
   <div class="row">
     <label>min rate: <input type="text" id="minRate" value="0.4" style="width:4em"
         onchange="localStorage.setItem('minRate', this.value)"></label>
+    <span style="color:gray;">lowest playback rate the controller is allowed to choose</span>
+  </div>
+
+  <div class="row">
     <label>max rate: <input type="text" id="maxRate" value="4" style="width:4em"
         onchange="localStorage.setItem('maxRate', this.value)"></label>
-    <span style="color:gray;">rate range the controller is allowed to choose between</span>
+    <span style="color:gray;">highest playback rate the controller is allowed to choose</span>
   </div>
 
   <div class="row">
     <label>slow trigger bias: <input type="text" id="slowTriggerBias" value="1.5" style="width:4em"
         onchange="localStorage.setItem('slowTriggerBias', this.value)"></label>
+    <span style="color:gray;">>1 = starts slowing down earlier in the segment</span>
+  </div>
+
+  <div class="row">
     <label>slow ramp bias: <input type="text" id="slowRampBias" value="1.5" style="width:4em"
         onchange="localStorage.setItem('slowRampBias', this.value)"></label>
-    <span style="color:gray;">trigger: >1 = starts slowing down earlier in the segment. ramp: >1 = reaches the slow
-      target faster once triggered.</span>
+    <span style="color:gray;">>1 = reaches the slow target faster once triggered</span>
   </div>
+
   <div class="row">
     <label>fast trigger bias: <input type="text" id="fastTriggerBias" value="0.6" style="width:4em"
         onchange="localStorage.setItem('fastTriggerBias', this.value)"></label>
+    <span style="color:gray;">&lt;1 = asks for less speed-up right when "ready" flips true</span>
+  </div>
+
+  <div class="row">
     <label>fast ramp bias: <input type="text" id="fastRampBias" value="0.5" style="width:4em"
         onchange="localStorage.setItem('fastRampBias', this.value)"></label>
-    <span style="color:gray;">trigger: &lt;1 = asks for less speed-up right when "ready" flips true. ramp: &lt;1 =
-      takes longer to actually reach the speed-up target.</span>
+    <span style="color:gray;">&lt;1 = takes longer to actually reach the speed-up target</span>
   </div>
 
   <div class="row">
@@ -182,9 +210,13 @@
   <div class="row">
     <label>ramp step (playbackRate change per tick): <input type="number" id="rampStep" value="0.05" step="0.01"
         style="width:5em" onchange="localStorage.setItem('rampStep', this.value)"></label>
+    <span style="color:gray;">how fast the *actual* video.playbackRate chases the smoothed target, per tick</span>
+  </div>
+
+  <div class="row">
     <label>ramp interval (ms): <input type="number" id="rampInterval" value="50" step="10" style="width:5em"
         onchange="localStorage.setItem('rampInterval', this.value)"></label>
-    <span style="color:gray;">how fast the *actual* video.playbackRate chases the smoothed target</span>
+    <span style="color:gray;">how often the ramp step is applied</span>
   </div>
 
   <div class="row">
@@ -247,20 +279,27 @@
 
 <fieldset>
   <legend><b>Server eval console</b></legend>
-  <div style="color:gray;">Executes arbitrary JS on the server and shows the result. Security note: this is a raw eval
+  <div class="row" style="color:gray;">Executes arbitrary JS on the server and shows the result. Security note: this is
+    a raw eval
     endpoint, only point it at trusted servers on your own network.</div>
-  <textarea id="evalInput" style="width:100%;height:4em;font-family:monospace;"
-    placeholder="e.g. latest  or  Array.from(downloaded)  or  segmentMs"></textarea><br>
-  <button onclick="runEval()">run eval</button>
-  <pre id="evalOutput" style="background:#eee;padding:4px;white-space:pre-wrap;"></pre>
+  <div class="row">
+    <textarea id="evalInput" style="width:100%;height:4em;font-family:monospace;"
+      placeholder="e.g. latest  or  Array.from(downloaded)  or  segmentMs"></textarea>
+  </div>
+  <div class="row"><button onclick="runEval()">run eval</button></div>
+  <div class="row">
+    <pre id="evalOutput" style="background:#eee;padding:4px;white-space:pre-wrap;"></pre>
+  </div>
 </fieldset>
 
 <textarea id='ln'>function(){}</textarea>
-<textarea style="width: 100%; height: 100px;" id='log' placeholder="Logs will come here"></textarea>
-<button onclick="document.getElementById('log').style.display = 'block'; flushLogToDom();">show log</button>
-<button onclick="document.getElementById('log').style.display = 'none';">hide log</button>
-<button onclick="downloadLogs();">download log</button>
-<label><input type="checkbox" id="tailLog" checked> tail -f</label>
+<div class="row"><textarea style="width: 100%; height: 100px;" id='log' placeholder="Logs will come here"></textarea>
+</div>
+<div class="row"><button onclick="document.getElementById('log').style.display = 'block'; flushLogToDom();">show
+    log</button></div>
+<div class="row"><button onclick="document.getElementById('log').style.display = 'none';">hide log</button></div>
+<div class="row"><button onclick="downloadLogs();">download log</button></div>
+<div class="row"><input type="checkbox" id="tailLog" checked><label for="tailLog">tail -f</label></div>
 <script>
   const vids = [document.getElementById("vd0"), document.getElementById("vd1")];
   let activeIdx = 0;
@@ -322,6 +361,8 @@
   rateMonitorEnabledInput.checked = localStorage.getItem("rateMonitorEnabled") === "true";
   const rateMonitorIntervalInput = document.getElementById("rateMonitorInterval");
   rateMonitorIntervalInput.value = localStorage.getItem("rateMonitorInterval") || rateMonitorIntervalInput.value;
+  const rateMonitorHistoryLenInput = document.getElementById("rateMonitorHistoryLen");
+  rateMonitorHistoryLenInput.value = localStorage.getItem("rateMonitorHistoryLen") || rateMonitorHistoryLenInput.value;
 
   ////////////////////
   // SETTINGS / PROFILES
@@ -334,7 +375,7 @@
     "swapTimeout", "earlySwapMs", "crossfadeMs", "minRate", "maxRate",
     "slowTriggerBias", "slowRampBias", "fastTriggerBias", "fastRampBias",
     "targetSmoothingStep", "rampStep", "rampInterval", "pollInterval",
-    "segmentDuration", "urgencyCurve", "rateMonitorEnabled", "rateMonitorInterval"
+    "segmentDuration", "urgencyCurve", "rateMonitorEnabled", "rateMonitorInterval", "rateMonitorHistoryLen"
   ];
 
   const CHECKBOX_KEYS = new Set(["dg", "autoRestart", "rateMonitorEnabled"]);
@@ -468,16 +509,48 @@
   // LIVE RATE MONITOR (independent of ramp/control loop)
   ////////////////////
   let rateMonitorTimerId = null;
+  let rateMonitorHistory = [];
+
+  function getRateMonitorHistoryLen() {
+    const el = document.getElementById("rateMonitorHistoryLen");
+    return Math.max(10, parseInt(el.value) || 200);
+  }
+
+  function renderRateMonitorHistory() {
+    const out = document.getElementById("rateMonitorOutput");
+    const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 20;
+    out.value = rateMonitorHistory.join("\n");
+    if (atBottom) out.scrollTop = out.scrollHeight;
+  }
 
   function pollRateMonitorOnce() {
-    const out = document.getElementById("rateMonitorOutput");
     if (!currentVideoHandle || !currentVideoHandle.video) {
-      out.value = "no active video yet";
-      return;
+      rateMonitorHistory.push(`${humanTimestamp(new Date())}  no active video yet`);
+    } else {
+      const v = currentVideoHandle.video;
+      rateMonitorHistory.push(
+        `${humanTimestamp(new Date())}  rate=${v.playbackRate.toFixed(4)}x  t=${v.currentTime.toFixed(4)}s`
+      );
     }
-    const v = currentVideoHandle.video;
-    const now = performance.now();
-    out.value = `rate=${v.playbackRate.toFixed(4)}x  t=${v.currentTime.toFixed(4)}s  clock=${now.toFixed(1)}ms`;
+    const maxLen = getRateMonitorHistoryLen();
+    if (rateMonitorHistory.length > maxLen) {
+      rateMonitorHistory.splice(0, rateMonitorHistory.length - maxLen);
+    }
+    renderRateMonitorHistory();
+  }
+
+  function clearRateMonitorLog() {
+    rateMonitorHistory = [];
+    renderRateMonitorHistory();
+  }
+
+  function downloadRateMonitorLog() {
+    const blob = new Blob([rateMonitorHistory.join("\n")], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `rate_history_${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   function restartRateMonitor() {
