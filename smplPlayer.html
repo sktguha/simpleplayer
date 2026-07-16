@@ -61,7 +61,7 @@
   }
 
   async function getLatestNumber() {
-    log('getLatestNumber called, curr is : ', currentVideoHandle.currtlyPlayingVideoNumber);
+    log('getLatestNumber called, curr is : ', currentVideoHandle?.currtlyPlayingVideoNumber);
     const data = await getApi();
     const segments = Array.isArray(data?.segments) ? data.segments : [];
 
