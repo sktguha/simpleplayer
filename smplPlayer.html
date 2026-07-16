@@ -19,19 +19,15 @@
     return data;
   }
 
-  async function getApi(fn = function () { }) {
-    const response = await fetch('https://api.example.com/status' / +fn.toString());
-    const data = await response.json();
-    fn(data);
-    return data;
-  }
-
   async function getStatusInfoFn(fn = function () { }) {
     return getApi(fn);
   }
   async function getLatestNumber() {
-    //api call and get mm 
-
+    const data = await getApi();
+    const segments = Array.isArray(data?.segments) ? data.segments : [];
+    return segments.length
+      ? Math.max(...segments.map(s => Number(s?.id) || -1))
+      : -1;
   }
 
   async function startSetintervalLoopSlowdown(currentVideo) {
@@ -49,7 +45,7 @@
   let currentVideoHandle = { currVideoNumber: -100000 }
   async function main() {
     while (1) {
-      number = getLatestNumber();
+      number = await getLatestNumber();
 
       if (number <= currVideoHandle.currVideoNumber) {
         // next part didn't come at end also. what to do 
