@@ -6,7 +6,6 @@
       position: relative;
       width: 100%;
       aspect-ratio: 16 / 9;
-      background-color: pink;
     }
 
     #player video {
@@ -22,9 +21,9 @@
 
 <span style="background-color: lightgray;">http://100.76.9.53:7500 tailscale etc, no trailing slash</span>
 <div id="player">
+  <canvas id="freezeFrame" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
   <video id="vd0"></video>
   <video id="vd1"></video>
-  <canvas id="freezeFrame" style="position:absolute;inset:0;width:100%;height:100%;display:none;"></canvas>
 </div>
 <label><input type="checkbox" id="dg">debug level log</label>
 <input type="text" id="url" value="http://100.76.9.53:7500" onchange="localStorage.setItem('url', this.value)"
@@ -369,6 +368,20 @@
         if (done) return;
         done = true;
         clearInterval(pollId);
+        // paint this element's frame onto the persistent background
+        // canvas the instant it's confirmed ready -- readyState>=3/
+        // oncanplay both guarantee a real decoded frame exists here.
+        // This canvas sits behind both <video> elements at all times,
+        // so there's no toggle/timing race: whichever frame was most
+        // recently captured is always what shows through any gap.
+        try {
+          const freeze = document.getElementById("freezeFrame");
+          freeze.width = el.videoWidth || el.clientWidth;
+          freeze.height = el.videoHeight || el.clientHeight;
+          freeze.getContext("2d").drawImage(el, 0, 0, freeze.width, freeze.height);
+        } catch (e) {
+          log('freeze background update failed', String(e));
+        }
         resolve();
       };
 
@@ -420,30 +433,17 @@
       swapped = true;
       idle.playbackRate = carryRate;
 
-      // freeze-frame: snapshot the currently-visible frame onto a canvas
-      // and show that on top -- guarantees something is always painted,
-      // so there's no blank/white/black gap while idle's first real
-      // frame is still decoding in.
-      const freeze = document.getElementById("freezeFrame");
-      try {
-        freeze.width = active.videoWidth || active.clientWidth;
-        freeze.height = active.videoHeight || active.clientHeight;
-        freeze.getContext("2d").drawImage(active, 0, 0, freeze.width, freeze.height);
-        freeze.style.display = "";
-      } catch (e) {
-        log('freeze snapshot failed', String(e));
-      }
-
       const reveal = () => {
         idle.style.display = "";
         active.style.display = "none";
         active.pause();
-        freeze.style.display = "none";
       };
 
       // don't reveal until the element has actually started producing
       // frames -- calling play() and immediately flipping display can
       // show one stale/blank paused frame first, which is the flash.
+      // the persistent background canvas (always behind both videos,
+      // continuously updated in loadIntoElement) covers this gap.
       idle.onplaying = () => { idle.onplaying = null; reveal(); };
       const p = idle.play();
       if (p && p.catch) p.catch(e => log('play() rejected', String(e)));
