@@ -4,6 +4,8 @@
 <video id="vd1" style="width:100%;display:none"></video>
 <input type="text" id="url" value="http://100.76.9.53:7500" onchange="localStorage.setItem('url', this.value)"
   style="width:100%" /><button onclick="main()" style="zoom:3;">start</button>
+<label>swap timeout (ms): <input type="number" id="swapTimeout" value="1000" style="width:6em"
+    onchange="localStorage.setItem('swapTimeout', this.value)"></label>
 <textarea id='ln'>function(){}</textarea>
 <textarea style="width: 100%; height: 100px;" id='log' placeholder="Logs will come here"></textarea>
 <button onclick="document.getElementById('log').style.display = 'block';">show log</button>
@@ -16,6 +18,9 @@
   let currentVideoHandle = null;
   const urlInput = document.getElementById("url");
   urlInput.value = localStorage.getItem("url") || urlInput.value;
+
+  const swapTimeoutInput = document.getElementById("swapTimeout");
+  swapTimeoutInput.value = localStorage.getItem("swapTimeout") || swapTimeoutInput.value;
 
   // 100.76.9.53 or hotspot ip etc
   let BASE_URL = document.getElementById("url").value;
@@ -55,7 +60,6 @@
     logRing.push(line);
     if (logRing.length > LOG_RING_SIZE) logRing.shift();
 
-    document.getElementById("log").value = logRing.join("\n");
     const logEl = document.getElementById("log");
     const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 20;
 
@@ -76,9 +80,11 @@
   }
 
   async function getApi(fn = function () { }) {
+    log('getApi called, BASE_URL is : ', BASE_URL);
     const response = await fetch(`${BASE_URL}/state`);
     const data = await response.json();
     fn(data);
+    log('getApi done returning data, BASE_URL is : ', BASE_URL);
     return data;
   }
 
@@ -126,13 +132,19 @@
       idle.onended = () => resolve();
     });
 
-    idle.oncanplay = () => {
+    let swapped = false;
+    const doSwap = () => {
+      if (swapped) return;
+      swapped = true;
       idle.play();
       idle.style.display = "";
       active.style.display = "none";
       active.pause();
       activeIdx = idleIdx;
     };
+
+    idle.oncanplay = doSwap;
+    setTimeout(doSwap, Number(swapTimeoutInput.value) || 1000);
 
     return {
       currtlyPlayingVideoNumber: number,
@@ -143,51 +155,6 @@
       }
     };
   }
-  /**
-    * 
-   Exactly. latest - buffer only works if every segment exists.
- 
-   With dead segments, you actually want:
- 
- Get the latest ID.
- Walk backwards.
- Skip "dead" segments.
- Count only "ready" segments.
- Stop after BUFFER ready segments.
- Initialize currentVideoHandle.currtlyPlayingVideoNumber to the segment before that one (or -1 if you ran out).
- 
- Something like:
- 
- async function getBufferedStart(buffer) {
-     const { segments } = await getApi();
- 
-     if (!segments.length) return -1;
- 
-     let id = Math.max(...segments.map(s => s.id));
-     let readySeen = 0;
- 
-     while (id >= 0) {
-         if (findStatusById(segments, id) === "ready") {
-             readySeen++;
-             if (readySeen === buffer)
-                 return id - 1;
-         }
-         id--;
-     }
- 
-     return -1;
- }
- 
- This naturally handles:
- 
- dead segments ✅
- gaps ✅
- startup with few segments ✅
- segment 0 edge case ✅
- 
- It's much more robust than subtracting the buffer directly.
-  */
-
 
   ////////////////////
   // MAIN LOOP
@@ -212,7 +179,7 @@
 
   async function startSetintervalLoopSlowdown(currentVideoHandle) {
     const staleSafePromiseVideoHandle = currentVideoHandle.promiseHandle;
-    const id = setInterval(() => slowOrSpeedUpVideo(currentVideoHandle), 300);
+    const id = setInterval(() => slowOrSpeedUpVideo(currentVideoHandle), 50);
     // can be timing issue if next video its changed to ready before the interval is cleared, 
     // but its not a big deal as small local, fix if needed is inside the 
     // slowOrSpeedUpVideo function to check if the currentVideoHandle 
@@ -222,6 +189,7 @@
 
   async function main() {
     const frontierLatestVideoNumber = await getLatestNumber();
+    log('got frontierLatestVideoNumber as', frontierLatestVideoNumber);
     // this is only one initialisation place, else undefined
     currentVideoHandle = { currtlyPlayingVideoNumber: frontierLatestVideoNumber };
 
