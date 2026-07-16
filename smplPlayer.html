@@ -15,9 +15,23 @@
   let BASE_URL = document.getElementById("url").value;
   let MAX_RATE = 1.5, MIN_RATE = 0.5;
   function log(...args) {
+    const text = args.map(arg => {
+      if (typeof arg === "string") return arg;
+      try {
+        return JSON.stringify(arg);
+      } catch {
+        try {
+          return String(arg);
+        } catch {
+          return "[Unprintable]";
+        }
+      }
+    }).join(" -- ");
+
     console.log(...args);
-    const log = document.getElementById('log');
-    log.value = log.value + '\n' + args.join(' -- ');
+
+    const log = document.getElementById("log");
+    log.value += "\n" + text;
   }
 
   async function getApi(fn = function () { }) {
