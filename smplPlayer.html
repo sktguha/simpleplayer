@@ -9,6 +9,7 @@
 <button onclick="document.getElementById('log').style.display = 'block';">show log</button>
 <button onclick="document.getElementById('log').style.display = 'none';">hide log</button>
 <button onclick="downloadLogs();">download log</button>
+<label><input type="checkbox" id="tailLog" checked> tail -f</label>
 <script>
   const vids = [document.getElementById("vd0"), document.getElementById("vd1")];
   let activeIdx = 0;
@@ -55,6 +56,14 @@
     if (logRing.length > LOG_RING_SIZE) logRing.shift();
 
     document.getElementById("log").value = logRing.join("\n");
+    const logEl = document.getElementById("log");
+    const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 20;
+
+    logEl.value = logRing.join("\n");
+
+    if (document.getElementById("tailLog").checked && atBottom) {
+      logEl.scrollTop = logEl.scrollHeight;
+    }
   }
 
   function downloadLogs() {
