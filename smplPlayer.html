@@ -47,17 +47,13 @@
   }
 
   async function getLatestNumber() {
-    log('getLatestNumber called, curr is : ', currentVideoHandle.currVideoNumber);
+    log('getLatestNumber called, curr is : ', currentVideoHandle.currtlyPlayingVideoNumber);
     const data = await getApi();
     const segments = Array.isArray(data?.segments) ? data.segments : [];
 
     return segments.length
       ? Math.max(...segments.map(s => Number(s?.id) || -1))
       : -1;
-  }
-
-  async function startSetintervalLoopSlowdown(currentVideo) {
-    const latestNumber = await getLatestNumber();
   }
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -76,7 +72,7 @@
     video.play();
 
     return {
-      currVideoNumber: number,
+      currtlyPlayingVideoNumber: number,
       promiseHandle,
       video,
       setSpeed(rate) {
@@ -88,19 +84,47 @@
   ////////////////////
   // MAIN LOOP
   ////////////////////
-  currentVideoHandle = { currVideoNumber: -Infinity };
+  currentVideoHandle = { currtlyPlayingVideoNumber: -Infinity };
+
+  async function slowOrSpeedUpVideo() {
+    const { segments } = await getApi();
+
+    let next = currentVideoHandle.currtlyPlayingVideoNumber + 1;
+    const findStatus = (idToFind) => segments.find(seg => seg.id === idToFind)?.status;
+    while (findStatus(next) === "dead") next++;
+
+    const ready = segments.find(s => s.id === next)?.status === "ready";
+    if (ready) {
+      log(`Next segment ${next} is ready, speeding up playback`);
+      currentVideoHandle.setSpeed(MAX_RATE);
+    }
+    else {
+      log(`Next segment ${next} is not ready, slowing down playback`);
+      currentVideoHandle.setSpeed(MAX_RATE);
+    }
+  }
+
+  async function startSetintervalLoopSlowdown(currentVideoHandle) {
+    const id = setInterval(() => slowOrSpeedUpVideo(currentVideoHandle), 300);
+    // can be timing issue if next video its changed to ready before the interval is cleared, 
+    // but its not a big deal as small local, fix if needed is inside the 
+    // slowOrSpeedUpVideo function to check if the currentVideoHandle 
+    // is still the same as the one passed in, after that getApi line
+    return currentVideoHandle.promiseHandle.finally(() => clearInterval(id));
+  }
+
   async function main() {
     while (1) {
       const number = await getLatestNumber();
 
-      if (number <= currentVideoHandle.currVideoNumber) {
+      if (number <= currentVideoHandle.currtlyPlayingVideoNumber) {
         await sleep(100);
         continue;
       }
 
       currentVideoHandle = playVideo(number);
 
-      // startSetintervalLoopSlowdown(currentVideoHandle);
+      startSetintervalLoopSlowdown(currentVideoHandle);
 
       await currentVideoHandle.promiseHandle;
     }
