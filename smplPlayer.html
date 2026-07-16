@@ -326,7 +326,7 @@
   }
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
-
+  let bufferedNext = null;
   // carryRate: the rate the *previous* segment was actually running at when it
   // ended. Passed in so the new segment starts there instead of snapping to 1x.
   function playVideo(number, carryRate = 1) {
@@ -334,12 +334,22 @@
     logI(`Playing segment ${number}`);
 
     const idleIdx = 1 - activeIdx;
-    const idle = vids[idleIdx];
     const active = vids[activeIdx];
-
     const crossfadeMs = getCrossfadeMs();
 
-    idle.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
+    // FIX: previously `idle` was declared, given a .src, and THEN
+    // immediately overwritten below regardless of whether a matching
+    // bufferedNext existed -- so bufferNext() was always wasted work.
+    // Now the bufferedNext check actually decides what `idle` is.
+    let idle;
+    if (bufferedNext?.number === number) {
+      idle = bufferedNext.video;
+      bufferedNext = null;
+      log("Using buffered video", number);
+    } else {
+      idle = vids[idleIdx];
+      idle.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
+    }
     // start at the rate we left off at, not 1x — avoids the hard reset/stutter
     // at every swap. (.src assignment can itself reset playbackRate on some
     // browsers, so we also re-apply it in doSwap right before play().)
@@ -402,6 +412,8 @@
       }, getRampInterval());
     }
 
+    let forcedEnd = false; // guards the 95%-duration early-swap from firing twice
+
     const promiseHandle = new Promise(resolve => {
       idle.onended = () => {
         clearInterval(rampTimerId);
@@ -410,6 +422,22 @@
         resolve(idle.playbackRate);
       };
     });
+
+    async function bufferNext(number) {
+      const v = document.createElement("video");
+      v.preload = "auto";
+      v.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
+
+      await new Promise(r => {
+        v.oncanplay = r;
+        v.load();
+      });
+
+      bufferedNext = {
+        number,
+        video: v
+      };
+    }
 
     return {
       currtlyPlayingVideoNumber: number,
@@ -423,6 +451,17 @@
       // without waiting for onended (used defensively, not required for the fix)
       getCurrentRate() {
         return idle.playbackRate;
+      },
+      bufferNext,
+      // simple >=95%-of-duration early-swap: skip waiting for the real
+      // 'ended' event once we're basically done with this segment.
+      maybeForceEndIfNearlyDone() {
+        if (forcedEnd || swapped === false) return;
+        if (!idle.duration || isNaN(idle.duration)) return;
+        if (idle.currentTime / idle.duration >= 0.95) {
+          forcedEnd = true;
+          idle.dispatchEvent(new Event('ended'));
+        }
       }
     };
   }
@@ -506,6 +545,10 @@
     } else {
       document.getElementById("stallStatus").textContent = "";
     }
+
+    // simple >=95%-duration check: if this segment is basically done,
+    // just end it now instead of waiting on urgency/onended.
+    currentVideoHandle.maybeForceEndIfNearlyDone();
 
     let next = currentVideoHandle.currtlyPlayingVideoNumber + 1;
     while (findStatusById(segments, next) === "dead") next++;
@@ -603,7 +646,11 @@
       startSetintervalLoopSlowdown(currentVideoHandle);
       const nextValidBufferedNumber = await loopUntilgetNextValidNumber();
       log('next valid number is', nextValidBufferedNumber, 'current is', currentVideoHandle.currtlyPlayingVideoNumber, 'waiting for current to end...');
-      currentVideHandle.setBufferedNext(nextValidBufferedNumber);
+      // FIX: was `currentVideHandle.setBufferedNext(...)` -- typo'd variable
+      // name (missing 'o') and a method that never existed on the handle, so
+      // this line always threw and silently killed the rest of the loop
+      // iteration. bufferNext() is the real method, on the correctly-spelled var.
+      currentVideoHandle.bufferNext(nextValidBufferedNumber);
       // promiseHandle now resolves with the rate the segment ended at;
       // that becomes next segment's starting rate
       carryRate = await currentVideoHandle.promiseHandle;
