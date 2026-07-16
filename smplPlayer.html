@@ -6,6 +6,7 @@
 <button onclick="document.getElementById('log').style.display = 'none';">hide log</button>
 <script>
   let BASE_URL = 'http://localhost:7500';
+  let MAX_RATE = 1.5, MIN_RATE = 0.5;
   function log(...args) {
     console.log(...args);
     const log = document.getElementById('log');
@@ -36,6 +37,28 @@
 
   }
 
+  function playVideo(number) {
+    const video = document.getElementById("vd");
+
+    video.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
+    video.playbackRate = 1;
+
+    const promiseHandle = new Promise(resolve => {
+      video.onended = () => resolve();
+    });
+
+    video.play();
+
+    return {
+      currVideoNumber: number,
+      promiseHandle,
+      video,
+      setSpeed(rate) {
+        video.playbackRate = rate;
+      }
+    };
+  }
+
   ////////////////////
   ////////////////////
   // MAIN LOOP   /////
@@ -56,9 +79,9 @@
       await currentVideo.promiseHandle
     }
   }
-  // main();
   log('test log')
   log('test log 2')
+  // main();
 </script>
 
 </html>
