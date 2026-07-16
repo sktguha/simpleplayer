@@ -129,14 +129,14 @@
 
   async function main() {
     while (1) {
-      const number = await getLatestNumber();
+      const nextValidNumber = await getNextValidNumber(currentVideoHandle.currtlyPlayingVideoNumber);
 
-      if (number <= currentVideoHandle.currtlyPlayingVideoNumber) {
+      if (nextValidNumber <= currentVideoHandle.currtlyPlayingVideoNumber) {
         await sleep(100);
         continue;
       }
 
-      currentVideoHandle = playVideo(number);
+      currentVideoHandle = playVideo(nextValidNumber);
 
       startSetintervalLoopSlowdown(currentVideoHandle);
 
