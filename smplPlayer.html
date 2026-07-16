@@ -425,6 +425,9 @@
   // bufferedNext: { number, video } where video is one of vids[0]/vids[1]
   // that already has segment `number` loaded via loadIntoElement.
   let bufferedNext = null;
+  // timing instrumentation: when did the most recent endEarly() fire, so
+  // we can measure real latency to the next segment's actual reveal.
+  let lastEndEarlyAt = null;
 
   // carryRate: the rate the *previous* segment was actually running at when
   // it ended. Passed in so the new segment starts there instead of 1x.
@@ -465,6 +468,11 @@
       idle.playbackRate = carryRate;
 
       const reveal = () => {
+        if (lastEndEarlyAt !== null) {
+          const latency = performance.now() - lastEndEarlyAt;
+          log(`MEASURED early-swap latency: ${latency.toFixed(1)}ms (endEarly -> actual reveal for segment ${number})`);
+          lastEndEarlyAt = null;
+        }
         if (crossfadeMs > 0) {
           // both elements stay in the render tree throughout (never
           // display:none -- that's what let the browser deprioritize
@@ -547,6 +555,7 @@
       // loop picks it up identically -- just without waiting for the
       // segment to actually end.
       endEarly() {
+        lastEndEarlyAt = performance.now();
         if (idle.onended) idle.onended();
       },
       // Buffer segment `number` into the slot that will be free for the
