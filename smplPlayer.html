@@ -7,7 +7,7 @@
   style="width:100%" /><button onclick="main()" style="zoom:3;">start</button>
 <label>swap timeout (ms): <input type="number" id="swapTimeout" value="1000" style="width:6em"
     onchange="localStorage.setItem('swapTimeout', this.value)"></label>
-<label>min rate: <input type="text" id="minRate" value="0.2" style="width:4em"
+<label>min rate: <input type="text" id="minRate" value="0.4" style="width:4em"
     onchange="localStorage.setItem('minRate', this.value)"></label>
 <label>max rate: <input type="text" id="maxRate" value="4" style="width:4em"
     onchange="localStorage.setItem('maxRate', this.value)"></label>
@@ -35,8 +35,8 @@
 
   // 100.76.9.53 or hotspot ip etc
   let BASE_URL = document.getElementById("url").value;
-  const getMinRate = () => parseFloat(minRateInput.value) || 0.5;
-  const getMaxRate = () => parseFloat(maxRateInput.value) || 1.5;
+  const getMinRate = () => parseFloat(minRateInput.value) || 0.4;
+  const getMaxRate = () => parseFloat(maxRateInput.value) || 4;
 
   // ---- log ring buffer ----
   const LOG_RING_SIZE = 5000;
@@ -158,8 +158,10 @@
   const RAMP_STEP = 0.05;       // playbackRate change per tick
   const RAMP_INTERVAL_MS = 50;  // how often we nudge the rate
 
-  function playVideo(number) {
-    log(`Playing video segment ${number}`, currentVideoHandle);
+  // carryRate: the rate the *previous* segment was actually running at when it
+  // ended. Passed in so the new segment starts there instead of snapping to 1x.
+  function playVideo(number, carryRate = 1) {
+    log(`Playing video segment ${number}`, currentVideoHandle, 'carryRate=', carryRate);
     logI(`Playing segment ${number}`);
 
     const idleIdx = 1 - activeIdx;
@@ -167,15 +169,19 @@
     const active = vids[activeIdx];
 
     idle.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
-    idle.playbackRate = 1;
+    // start at the rate we left off at, not 1x — avoids the hard reset/stutter
+    // at every swap. (.src assignment can itself reset playbackRate on some
+    // browsers, so we also re-apply it in doSwap right before play().)
+    idle.playbackRate = carryRate;
 
     let swapped = false;
-    let targetRate = 1;
+    let targetRate = carryRate;
     let rampTimerId = null;
 
     const doSwap = () => {
       if (swapped) return;
       swapped = true;
+      idle.playbackRate = carryRate; // re-assert in case .src reset it
       idle.play();
       idle.style.display = "";
       active.style.display = "none";
@@ -203,7 +209,9 @@
     const promiseHandle = new Promise(resolve => {
       idle.onended = () => {
         clearInterval(rampTimerId);
-        resolve();
+        // hand off the rate this segment actually ended at, so the next
+        // playVideo() call can carry it forward instead of resetting to 1x
+        resolve(idle.playbackRate);
       };
     });
 
@@ -214,6 +222,11 @@
       // now just sets a target; playVideo's own ramp loop eases toward it
       setSpeed(rate) {
         targetRate = rate;
+      },
+      // lets external code read "what rate is this segment on right now"
+      // without waiting for onended (used defensively, not required for the fix)
+      getCurrentRate() {
+        return idle.playbackRate;
       }
     };
   }
@@ -257,6 +270,8 @@
     // this is only one initialisation place, else undefined
     currentVideoHandle = { currtlyPlayingVideoNumber: frontierLatestVideoNumber };
 
+    let carryRate = 1; // first segment ever: no prior rate to carry, start at 1x
+
     while (1) {
       const nextValidNumber = await getNextValidNumber(currentVideoHandle.currtlyPlayingVideoNumber);
 
@@ -266,11 +281,13 @@
         continue;
       }
 
-      currentVideoHandle = playVideo(nextValidNumber);
+      currentVideoHandle = playVideo(nextValidNumber, carryRate);
 
       startSetintervalLoopSlowdown(currentVideoHandle);
 
-      await currentVideoHandle.promiseHandle;
+      // promiseHandle now resolves with the rate the segment ended at;
+      // that becomes next segment's starting rate
+      carryRate = await currentVideoHandle.promiseHandle;
     }
   }
 
