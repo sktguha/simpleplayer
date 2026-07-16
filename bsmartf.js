@@ -143,6 +143,19 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === "POST" && pathname === "/restart") {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("Restarting");
+
+    spawn(process.execPath, process.argv.slice(1), {
+      detached: true,
+      stdio: "ignore"
+    }).unref();
+
+    process.exit(0);
+    return;
+  }
+
   res.writeHead(404, { "Content-Type": "text/plain" });
   res.end("Not Found");
 });
