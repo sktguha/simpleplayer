@@ -581,7 +581,7 @@ The change is localized – just UI elements + a couple of lines in the control 
     const buffer = getStartupBuffer();
     const startNumber = Math.max(-1, frontierLatestVideoNumber - buffer);
     log('got frontierLatestVideoNumber as', frontierLatestVideoNumber, 'starting from', startNumber, '(buffer=', buffer, ')');
-    // this is only one initialisation place, else undefined
+    // this is only one initialisation place, else undefined.
     currentVideoHandle = { currtlyPlayingVideoNumber: startNumber };
     lastKnownLatest = frontierLatestVideoNumber;
     lastNewSegmentSeenAt = Date.now();
