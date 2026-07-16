@@ -6,7 +6,6 @@
       position: relative;
       width: 100%;
       aspect-ratio: 16 / 9;
-      background: black;
     }
 
     #player video {
@@ -24,6 +23,7 @@
 <div id="player">
   <video id="vd0"></video>
   <video id="vd1"></video>
+  <canvas id="freezeFrame" style="position:absolute;inset:0;width:100%;height:100%;display:none;"></canvas>
 </div>
 <label><input type="checkbox" id="dg">debug level log</label>
 <input type="text" id="url" value="http://100.76.9.53:7500" onchange="localStorage.setItem('url', this.value)"
@@ -437,6 +437,20 @@
       swapped = true;
       idle.playbackRate = carryRate;
 
+      // freeze-frame: snapshot the currently-visible frame onto a canvas
+      // and show that on top -- guarantees something is always painted,
+      // so there's no blank/white/black gap while idle's first real
+      // frame is still decoding in.
+      const freeze = document.getElementById("freezeFrame");
+      try {
+        freeze.width = active.videoWidth || active.clientWidth;
+        freeze.height = active.videoHeight || active.clientHeight;
+        freeze.getContext("2d").drawImage(active, 0, 0, freeze.width, freeze.height);
+        freeze.style.display = "";
+      } catch (e) {
+        log('freeze snapshot failed', String(e));
+      }
+
       const reveal = () => {
         if (crossfadeMs > 0) {
           active.style.transition = `opacity ${crossfadeMs}ms linear`;
@@ -449,11 +463,13 @@
             active.style.display = "none";
             active.pause();
             active.style.opacity = 1;
+            freeze.style.display = "none";
           }, crossfadeMs);
         } else {
           idle.style.display = "";
           active.style.display = "none";
           active.pause();
+          freeze.style.display = "none";
         }
       };
 
