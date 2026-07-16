@@ -7,6 +7,10 @@
   style="width:100%" /><button onclick="main()" style="zoom:3;">start</button>
 <label>swap timeout (ms): <input type="number" id="swapTimeout" value="1000" style="width:6em"
     onchange="localStorage.setItem('swapTimeout', this.value)"></label>
+<label>min rate: <input type="text" id="minRate" value="0.5" style="width:4em"
+    onchange="localStorage.setItem('minRate', this.value)"></label>
+<label>max rate: <input type="text" id="maxRate" value="1.5" style="width:4em"
+    onchange="localStorage.setItem('maxRate', this.value)"></label>
 <div id="logI" style="white-space:pre;font-family:monospace;"></div>
 <textarea id='ln'>function(){}</textarea>
 <textarea style="width: 100%; height: 100px;" id='log' placeholder="Logs will come here"></textarea>
@@ -24,9 +28,15 @@
   const swapTimeoutInput = document.getElementById("swapTimeout");
   swapTimeoutInput.value = localStorage.getItem("swapTimeout") || swapTimeoutInput.value;
 
+  const minRateInput = document.getElementById("minRate");
+  minRateInput.value = localStorage.getItem("minRate") || minRateInput.value;
+  const maxRateInput = document.getElementById("maxRate");
+  maxRateInput.value = localStorage.getItem("maxRate") || maxRateInput.value;
+
   // 100.76.9.53 or hotspot ip etc
   let BASE_URL = document.getElementById("url").value;
-  let MAX_RATE = 1.5, MIN_RATE = 0.5;
+  const getMinRate = () => parseFloat(minRateInput.value) || 0.5;
+  const getMaxRate = () => parseFloat(maxRateInput.value) || 1.5;
 
   // ---- log ring buffer ----
   const LOG_RING_SIZE = 5000;
@@ -221,13 +231,13 @@
     const ready = findStatusById(segments, next) === "ready";
     if (ready) {
       logD(`Next segment ${next} is ready, speeding up playback`);
-      logI(`Speed target: ${MAX_RATE}x (next ready)`);
-      currentVideoHandle.setSpeed(MAX_RATE);
+      logI(`Speed target: ${getMaxRate()}x (next ready)`);
+      currentVideoHandle.setSpeed(getMaxRate());
     }
     else {
       logD(`Next segment ${next} is not ready, slowing down playback`);
-      logI(`Speed target: ${MIN_RATE}x (next not ready)`);
-      currentVideoHandle.setSpeed(MIN_RATE);
+      logI(`Speed target: ${getMinRate()}x (next not ready)`);
+      currentVideoHandle.setSpeed(getMinRate());
     }
   }
 
