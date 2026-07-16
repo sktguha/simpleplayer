@@ -578,7 +578,7 @@
       logD(`Next segment ${next} is not ready, urgency=${urgency.toFixed(2)} (biased ${biasedUrgency.toFixed(2)}), desired rate=${desiredRate.toFixed(2)}`);
     }
 
-    // ramp bias: how fast smoothedTarget chases desiredRate, split by direction
+    // ramp bias: how fast smoothedTarget chases desiredRate, split by direction.
     const baseSmoothStep = getTargetSmoothingStep();
     const movingDown = desiredRate < smoothedTarget;
     const smoothStep = baseSmoothStep * (movingDown ? getSlowRampBias() : getFastRampBias());
