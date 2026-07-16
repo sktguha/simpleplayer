@@ -590,7 +590,7 @@ The change is localized – just UI elements + a couple of lines in the control 
 
     while (1) {
       const nextValidNumber = await getNextValidNumber(currentVideoHandle.currtlyPlayingVideoNumber);
-
+      const sleepTime = 10; // ms
       if (nextValidNumber === null || nextValidNumber <= currentVideoHandle.currtlyPlayingVideoNumber) {
         log('got invalid nextValidNumber:' + nextValidNumber + ' waiting for ' + sleepTime + 'ms and retrying...', nextValidNumber, currentVideoHandle.currtlyPlayingVideoNumber);
         await sleep(sleepTime);
