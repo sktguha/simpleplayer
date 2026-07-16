@@ -504,6 +504,18 @@
           }
           lastEndEarlyAt = null;
         }
+        // BUG FIX (outgoing side): repaint the freeze canvas from the
+        // OUTGOING video's actual current frame right before we
+        // pause/hide it. Covers the gap if `idle` hasn't visually
+        // caught up yet at the instant we reveal it.
+        try {
+          const freeze = document.getElementById("freezeFrame");
+          freeze.width = active.videoWidth || active.clientWidth;
+          freeze.height = active.videoHeight || active.clientHeight;
+          freeze.getContext("2d").drawImage(active, 0, 0, freeze.width, freeze.height);
+        } catch (e) {
+          log('freeze background update (outgoing frame) failed', String(e));
+        }
         if (crossfadeMs > 0) {
           // both elements stay in the render tree throughout (never
           // display:none -- that's what let the browser deprioritize
@@ -527,12 +539,41 @@
         }
       };
 
-      // don't reveal until the element has actually started producing
-      // frames -- calling play() and immediately flipping display can
-      // show one stale/blank paused frame first, which is the flash.
-      // the persistent background canvas (always behind both videos,
-      // continuously updated in loadIntoElement) covers this gap.
-      idle.onplaying = () => { idle.onplaying = null; reveal(); };
+      // BUG FIX (incoming side): 'onplaying' only guarantees playback
+      // has STARTED, not that the browser has actually composited a
+      // frame for `idle` yet -- that's the same gap that motivated the
+      // freeze canvas in the first place, so trusting onplaying alone
+      // to gate reveal() left a real window where idle could go
+      // opacity:1 before it had anything to show, exposing whatever
+      // was underneath (a stale frame-0 thumbnail from loadIntoElement,
+      // painted possibly seconds earlier on the buffered path -- this
+      // is what read as "falls back to a stutter/freeze image").
+      //
+      // Fix: after onplaying fires, wait for TWO chained
+      // requestAnimationFrame callbacks before revealing. This is the
+      // standard technique for "wait until the browser has definitely
+      // painted at least once" -- the first rAF fires before the next
+      // paint, the second fires after it, so by the time the second
+      // callback runs a real composited frame is guaranteed to exist.
+      // Only THEN do we grab idle's live frame into the canvas and
+      // reveal -- so the canvas is correct for whichever direction of
+      // the handoff turns out to be the slow one.
+      idle.onplaying = () => {
+        idle.onplaying = null;
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            try {
+              const freeze = document.getElementById("freezeFrame");
+              freeze.width = idle.videoWidth || idle.clientWidth;
+              freeze.height = idle.videoHeight || idle.clientHeight;
+              freeze.getContext("2d").drawImage(idle, 0, 0, freeze.width, freeze.height);
+            } catch (e) {
+              log('freeze background update (incoming frame) failed', String(e));
+            }
+            reveal();
+          });
+        });
+      };
       const p = idle.play();
       if (p && p.catch) p.catch(e => log('play() rejected', String(e)));
       // fallback: some browsers/elements may not fire 'playing' reliably
