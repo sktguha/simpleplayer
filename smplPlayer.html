@@ -8,7 +8,7 @@
 <button onclick="document.getElementById('log').style.display = 'block';">show log</button>
 <button onclick="document.getElementById('log').style.display = 'none';">hide log</button>
 <script>
-  let currentVideoHandle = null;
+  let currentVideoHandle = { currtlyPlayingVideoNumber: -1 };
   const urlInput = document.getElementById("url");
   urlInput.value = localStorage.getItem("url") || urlInput.value;
 
@@ -172,8 +172,8 @@ It's much more robust than subtracting the buffer directly.
   }
 
   async function main() {
-    const frontierLatestVideoNumber = await getLatestNumber();
-    currentVideoHandle = { currtlyPlayingVideoNumber: frontierLatestVideoNumber };
+    const frontierLatestVideoNumber = await getLatestNumber(-1);
+    currentVideoHandle.currtlyPlayingVideoNumber = frontierLatestVideoNumber;
     // currentVideoHandle = { currtlyPlayingVideoNumber: -1 }
     // if starting then its -1
 
