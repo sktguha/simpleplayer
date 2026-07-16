@@ -401,28 +401,37 @@
     const doSwap = () => {
       if (swapped) return;
       swapped = true;
-      idle.currentTime = 0; // reused elements can have stale currentTime; force reset
       idle.playbackRate = carryRate;
-      const p = idle.play();
-      if (p && p.catch) p.catch(e => log('play() rejected', String(e)));
 
-      if (crossfadeMs > 0) {
-        active.style.transition = `opacity ${crossfadeMs}ms linear`;
-        idle.style.display = "";
-        requestAnimationFrame(() => {
-          idle.style.opacity = 1;
-          active.style.opacity = 0;
-        });
-        setTimeout(() => {
+      const reveal = () => {
+        if (crossfadeMs > 0) {
+          active.style.transition = `opacity ${crossfadeMs}ms linear`;
+          idle.style.display = "";
+          requestAnimationFrame(() => {
+            idle.style.opacity = 1;
+            active.style.opacity = 0;
+          });
+          setTimeout(() => {
+            active.style.display = "none";
+            active.pause();
+            active.style.opacity = 1;
+          }, crossfadeMs);
+        } else {
+          idle.style.display = "";
           active.style.display = "none";
           active.pause();
-          active.style.opacity = 1;
-        }, crossfadeMs);
-      } else {
-        idle.style.display = "";
-        active.style.display = "none";
-        active.pause();
-      }
+        }
+      };
+
+      // don't reveal until the element has actually started producing
+      // frames -- calling play() and immediately flipping display can
+      // show one stale/blank paused frame first, which is the flash.
+      idle.onplaying = () => { idle.onplaying = null; reveal(); };
+      const p = idle.play();
+      if (p && p.catch) p.catch(e => log('play() rejected', String(e)));
+      // fallback: some browsers/elements may not fire 'playing' reliably
+      // (e.g. already-playing edge cases) -- reveal shortly after anyway
+      setTimeout(() => { if (idle.onplaying) { idle.onplaying = null; reveal(); } }, 150);
 
       activeIdx = idleIdx;
       startRamp();
