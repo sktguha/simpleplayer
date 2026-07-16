@@ -592,8 +592,8 @@ The change is localized – just UI elements + a couple of lines in the control 
       const nextValidNumber = await getNextValidNumber(currentVideoHandle.currtlyPlayingVideoNumber);
 
       if (nextValidNumber === null || nextValidNumber <= currentVideoHandle.currtlyPlayingVideoNumber) {
-        log('invalid nextValidNumber, waiting for 100ms and retrying...', nextValidNumber, currentVideoHandle.currtlyPlayingVideoNumber);
-        await sleep(10);
+        log('got invalid nextValidNumber:' + nextValidNumber + ' waiting for ' + sleepTime + 'ms and retrying...', nextValidNumber, currentVideoHandle.currtlyPlayingVideoNumber);
+        await sleep(sleepTime);
         continue;
       }
 
