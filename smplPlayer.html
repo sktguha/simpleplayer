@@ -23,9 +23,11 @@
   async function getStatusInfoFn(fn = function () { }) {
     return getApi(fn);
   }
+
   async function getLatestNumber() {
     const data = await getApi();
     const segments = Array.isArray(data?.segments) ? data.segments : [];
+
     return segments.length
       ? Math.max(...segments.map(s => Number(s?.id) || -1))
       : -1;
@@ -33,8 +35,6 @@
 
   async function startSetintervalLoopSlowdown(currentVideo) {
     const latestNumber = await getLatestNumber();
-
-
   }
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -62,29 +62,32 @@
   }
 
   ////////////////////
+  // MAIN LOOP
   ////////////////////
-  // MAIN LOOP   /////
-  ///////////////////
-  ///////////////////
 
-  let currentVideoHandle = { currVideoNumber: -100000 }
+  let currentVideoHandle = { currVideoNumber: -100000 };
+
   async function main() {
     while (1) {
-      number = await getLatestNumber();
+      const number = await getLatestNumber();
 
-      if (number <= currVideoHandle.currVideoNumber) {
-        // next part didn't come at end also. what to do 
-        await sleep(100); // wait for next part to come.
+      if (number <= currentVideoHandle.currVideoNumber) {
+        await sleep(100);
         continue;
       }
-      currentVideo = playVideo(number)
-      // startSetintervalLoopSlowdown(currentVideo, getLatestNumber); // fn reference . also listen currentvideo.promise handle and clear itself internally
-      await currentVideo.promiseHandle
+
+      currentVideoHandle = playVideo(number);
+
+      // startSetintervalLoopSlowdown(currentVideoHandle);
+
+      await currentVideoHandle.promiseHandle;
     }
   }
-  log('test log')
-  log('test log 2')
-  // main();
+
+  log("test log");
+  log("test log 2");
+
+  main();
 </script>
 
 </html>
