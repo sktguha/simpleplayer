@@ -2,6 +2,7 @@
 <span style="background-color: lightgray;">http://100.76.9.53:7500 tailscale etc, no trailing slash</span>
 <video id="vd0" style="width:100%"></video>
 <video id="vd1" style="width:100%;display:none"></video>
+<label><input type="checkbox" id="dg">debug level log</label>
 <input type="text" id="url" value="http://100.76.9.53:7500" onchange="localStorage.setItem('url', this.value)"
   style="width:100%" /><button onclick="main()" style="zoom:3;">start</button>
 <label>swap timeout (ms): <input type="number" id="swapTimeout" value="1000" style="width:6em"
@@ -70,6 +71,12 @@
     }
   }
 
+  function logD(...args) {
+    if (document.getElementById("dg").checked) {
+      log(...args);
+    }
+  }
+
   function downloadLogs() {
     const blob = new Blob([logRing.join("\n")], { type: "text/plain" });
     const a = document.createElement("a");
@@ -80,11 +87,11 @@
   }
 
   async function getApi(fn = function () { }) {
-    log('getApi called, BASE_URL is : ', BASE_URL);
+    logD('getApi called, BASE_URL is : ', BASE_URL);
     const response = await fetch(`${BASE_URL}/state`);
     const data = await response.json();
     fn(data);
-    log('getApi done returning data, BASE_URL is : ', BASE_URL);
+    logD('getApi done returning data, BASE_URL is : ', BASE_URL);
     return data;
   }
 
