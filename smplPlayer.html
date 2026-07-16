@@ -15,54 +15,6 @@
       height: 100%;
       object-fit: contain;
       pointer-events: none;
-      opacity: 0;
-    }
-
-    #player video.active {
-      opacity: 1;
-    }
-
-    #debugDualView {
-      display: none;
-      gap: 8px;
-      margin-top: 8px;
-    }
-
-    #debugDualView.shown {
-      display: flex;
-      flex-direction: column;
-    }
-
-    .debugSlot {
-      position: relative;
-      width: 100%;
-      aspect-ratio: 16 / 9;
-      background: #111;
-      border: 2px solid #444;
-    }
-
-    .debugSlot.isCurrentlyActive {
-      border-color: #2ecc40;
-    }
-
-    .debugSlot canvas {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-    }
-
-    .debugSlot .debugLabel {
-      position: absolute;
-      top: 2px;
-      left: 4px;
-      color: #0f0;
-      font-family: monospace;
-      font-size: 0.9em;
-      background: rgba(0, 0, 0, 0.6);
-      padding: 1px 4px;
-      z-index: 2;
-      pointer-events: none;
     }
   </style>
 </head>
@@ -73,24 +25,6 @@
   <video id="vd0"></video>
   <video id="vd1"></video>
 </div>
-
-<label><input type="checkbox" id="debugDualViewToggle" onchange="toggleDebugDualView(this.checked)">
-  show both video elements live (debug swap visually)</label>
-<div id="debugDualView">
-  <div class="debugSlot" id="debugSlot0">
-    <div class="debugLabel" id="debugLabel0">vd0</div>
-    <canvas id="debugCanvas0"></canvas>
-  </div>
-  <div class="debugSlot" id="debugSlot1">
-    <div class="debugLabel" id="debugLabel1">vd1</div>
-    <canvas id="debugCanvas1"></canvas>
-  </div>
-  <div class="debugSlot" id="debugSlotFreeze">
-    <div class="debugLabel">freezeFrame canvas (what the fallback actually shows)</div>
-    <canvas id="debugCanvasFreeze"></canvas>
-  </div>
-</div>
-
 <label><input type="checkbox" id="dg">debug level log</label>
 <input type="text" id="url" value="http://100.76.9.53:7500" onchange="localStorage.setItem('url', this.value)"
   style="width:100%" /><button onclick="main()" style="zoom:3;">start</button>
@@ -173,13 +107,6 @@
     <label>ramp interval (ms): <input type="number" id="rampInterval" value="50" step="10" style="width:5em"
         onchange="localStorage.setItem('rampInterval', this.value)"></label>
     <span style="color:gray;">how fast the *actual* video.playbackRate chases the smoothed target</span>
-  </div>
-
-  <div>
-    <label>proportional ramp factor: <input type="number" id="proportionalRampFactor" value="0.2" step="0.05" min="0"
-        style="width:5em" onchange="localStorage.setItem('proportionalRampFactor', this.value)"></label>
-    <span style="color:gray;">extra step size = distance-from-target × this factor. Higher = large carry-over rate
-      mismatches (e.g. swapping in at 1.65x) settle faster. 0 = old fixed-step-only behavior.</span>
   </div>
 
   <div>
@@ -286,9 +213,6 @@
   const rampIntervalInput = document.getElementById("rampInterval");
   rampIntervalInput.value = localStorage.getItem("rampInterval") || rampIntervalInput.value;
 
-  const proportionalRampFactorInput = document.getElementById("proportionalRampFactor");
-  proportionalRampFactorInput.value = localStorage.getItem("proportionalRampFactor") || proportionalRampFactorInput.value;
-
   const pollIntervalInput = document.getElementById("pollInterval");
   pollIntervalInput.value = localStorage.getItem("pollInterval") || pollIntervalInput.value;
 
@@ -323,10 +247,6 @@
   const getTargetSmoothingStep = () => parseFloat(targetSmoothingStepInput.value) || 0.15;
   const getRampStep = () => parseFloat(rampStepInput.value) || 0.05;
   const getRampInterval = () => parseFloat(rampIntervalInput.value) || 50;
-  const getProportionalRampFactor = () => {
-    const v = parseFloat(proportionalRampFactorInput.value);
-    return Number.isNaN(v) ? 0.2 : v;
-  };
   const getPollInterval = () => parseFloat(pollIntervalInput.value) || 50;
   const getSegmentDuration = () => parseFloat(segmentDurationInput.value) || 1;
   const getCrossfadeMs = () => parseFloat(crossfadeMsInput.value) || 0;
@@ -405,9 +325,9 @@
     URL.revokeObjectURL(a.href);
   }
 
-  async function getApi(fn = function () { }, signal = undefined) {
+  async function getApi(fn = function () { }) {
     logD('getApi called, BASE_URL is : ', BASE_URL);
-    const response = await fetch(`${BASE_URL}/state`, signal ? { signal } : undefined);
+    const response = await fetch(`${BASE_URL}/state`);
     const data = await response.json();
     fn(data);
     logD('getApi done returning data, BASE_URL is : ', BASE_URL);
@@ -486,18 +406,6 @@
   // bufferedNext: { number, video } where video is one of vids[0]/vids[1]
   // that already has segment `number` loaded via loadIntoElement.
   let bufferedNext = null;
-  // timing instrumentation: when did the most recent endEarly() fire, so
-  // we can measure real latency to the next segment's actual reveal.
-  // NOTE: this measurement is contaminated unless split by path -- see
-  // the alreadyBuffered branch below. "MEASURED early-swap latency" used
-  // to average two different quantities together:
-  //   (a) buffered path: loadPromise resolves instantly, so the whole
-  //       number is just idle.play() -> onplaying (decoder/GPU handoff).
-  //   (b) cold path: loadPromise waits on network fetch + el.load() +
-  //       readyState>=3/oncanplay, which is a much larger, noisier
-  //       quantity representing "bufferNext ran late", not swap cost.
-  // These are now logged separately (see doSwap/reveal below).
-  let lastEndEarlyAt = null;
 
   // carryRate: the rate the *previous* segment was actually running at when
   // it ended. Passed in so the new segment starts there instead of 1x.
@@ -517,10 +425,6 @@
       bufferedNext = null;
     }
     let loadPromise;
-    // timestamp taken the instant we know which path we're on, so the
-    // cold-path branch can measure its own load wait independently of
-    // whatever endEarly() timestamp happens to be sitting around.
-    const loadStartedAt = performance.now();
     if (alreadyBuffered) {
       log("Using buffered video", number);
       bufferedNext = null;
@@ -541,100 +445,40 @@
       swapped = true;
       idle.playbackRate = carryRate;
 
-      // stamped right as doSwap actually runs (i.e. loadPromise has
-      // resolved) -- this is the boundary between "waiting for the
-      // segment to be ready" and "asking the element to play it".
-      const loadDoneAt = performance.now();
-
       const reveal = () => {
-        if (lastEndEarlyAt !== null) {
-          const handoffMs = performance.now() - loadDoneAt;
-          if (alreadyBuffered) {
-            // pure decoder/GPU handoff cost: element already had a
-            // decoded frame sitting ready, loadPromise was instant.
-            log(`MEASURED buffered-swap handoff: ${handoffMs.toFixed(1)}ms (endEarly -> onplaying, segment ${number}, prebuffered=true)`);
-          } else {
-            // cold path: break out how much of the total was spent
-            // waiting on loadIntoElement (network fetch + decode-ready)
-            // vs. the actual play()->onplaying handoff, so a slow
-            // number here points at "buffer earlier" rather than being
-            // confused with decoder overhead.
-            const loadWaitMs = loadDoneAt - lastEndEarlyAt;
-            const totalMs = loadWaitMs + handoffMs;
-            log(`MEASURED cold-swap latency: ${loadWaitMs.toFixed(1)}ms load-wait + ${handoffMs.toFixed(1)}ms handoff = ${totalMs.toFixed(1)}ms total (endEarly -> onplaying, segment ${number}, prebuffered=false)`);
-          }
-          lastEndEarlyAt = null;
-        }
-        // BUG FIX (outgoing side): repaint the freeze canvas from the
-        // OUTGOING video's actual current frame right before we
-        // pause/hide it. Covers the gap if `idle` hasn't visually
-        // caught up yet at the instant we reveal it.
-        try {
-          const freeze = document.getElementById("freezeFrame");
-          freeze.width = active.videoWidth || active.clientWidth;
-          freeze.height = active.videoHeight || active.clientHeight;
-          freeze.getContext("2d").drawImage(active, 0, 0, freeze.width, freeze.height);
-        } catch (e) {
-          log('freeze background update (outgoing frame) failed', String(e));
-        }
         if (crossfadeMs > 0) {
-          // both elements stay in the render tree throughout (never
-          // display:none -- that's what let the browser deprioritize
-          // decode on the hidden one). idle starts at opacity 0 so it
-          // eases in instead of hard-cutting.
+          // both elements are visible during the fade -- the persistent
+          // background canvas is behind both, so there's no gap even
+          // mid-transition. idle starts at opacity 0 so it eases in
+          // instead of hard-cutting.
+          idle.style.opacity = 0;
           idle.style.transition = `opacity ${crossfadeMs}ms linear`;
           active.style.transition = `opacity ${crossfadeMs}ms linear`;
+          idle.style.display = "";
           requestAnimationFrame(() => {
-            idle.classList.add("active");
-            active.classList.remove("active");
+            idle.style.opacity = 1;
+            active.style.opacity = 0;
           });
           setTimeout(() => {
+            active.style.display = "none";
             active.pause();
+            active.style.opacity = 1;
             active.style.transition = "";
             idle.style.transition = "";
           }, crossfadeMs);
         } else {
-          idle.classList.add("active");
-          active.classList.remove("active");
+          idle.style.display = "";
+          active.style.display = "none";
           active.pause();
         }
       };
 
-      // BUG FIX (incoming side): 'onplaying' only guarantees playback
-      // has STARTED, not that the browser has actually composited a
-      // frame for `idle` yet -- that's the same gap that motivated the
-      // freeze canvas in the first place, so trusting onplaying alone
-      // to gate reveal() left a real window where idle could go
-      // opacity:1 before it had anything to show, exposing whatever
-      // was underneath (a stale frame-0 thumbnail from loadIntoElement,
-      // painted possibly seconds earlier on the buffered path -- this
-      // is what read as "falls back to a stutter/freeze image").
-      //
-      // Fix: after onplaying fires, wait for TWO chained
-      // requestAnimationFrame callbacks before revealing. This is the
-      // standard technique for "wait until the browser has definitely
-      // painted at least once" -- the first rAF fires before the next
-      // paint, the second fires after it, so by the time the second
-      // callback runs a real composited frame is guaranteed to exist.
-      // Only THEN do we grab idle's live frame into the canvas and
-      // reveal -- so the canvas is correct for whichever direction of
-      // the handoff turns out to be the slow one.
-      idle.onplaying = () => {
-        idle.onplaying = null;
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            try {
-              const freeze = document.getElementById("freezeFrame");
-              freeze.width = idle.videoWidth || idle.clientWidth;
-              freeze.height = idle.videoHeight || idle.clientHeight;
-              freeze.getContext("2d").drawImage(idle, 0, 0, freeze.width, freeze.height);
-            } catch (e) {
-              log('freeze background update (incoming frame) failed', String(e));
-            }
-            reveal();
-          });
-        });
-      };
+      // don't reveal until the element has actually started producing
+      // frames -- calling play() and immediately flipping display can
+      // show one stale/blank paused frame first, which is the flash.
+      // the persistent background canvas (always behind both videos,
+      // continuously updated in loadIntoElement) covers this gap.
+      idle.onplaying = () => { idle.onplaying = null; reveal(); };
       const p = idle.play();
       if (p && p.catch) p.catch(e => log('play() rejected', String(e)));
       // fallback: some browsers/elements may not fire 'playing' reliably
@@ -650,48 +494,19 @@
 
     function startRamp() {
       rampTimerId = setInterval(() => {
-        const baseStep = getRampStep();
+        const step = getRampStep();
         const rate = idle.playbackRate;
-        const distance = Math.abs(rate - targetRate);
-        if (distance < baseStep) {
+        if (Math.abs(rate - targetRate) < step) {
           idle.playbackRate = targetRate;
           return;
         }
-        // proportional component: the further playbackRate currently is
-        // from where it needs to go, the bigger a step we take -- this
-        // is what makes a large carry-over mismatch (e.g. swapping in at
-        // 1.65x when target is ~1x) settle quickly instead of crawling
-        // down at the same fixed rampStep used for small corrections.
-        // Floor of baseStep preserves existing fine-grained smoothness
-        // once close to target.
-        const proportionalStep = distance * getProportionalRampFactor();
-        const step = Math.max(baseStep, proportionalStep);
         idle.playbackRate = rate < targetRate ? rate + step : rate - step;
         updateActualRateStat(idle.playbackRate);
       }, getRampInterval());
     }
 
-    // BRUTE FORCE / belt-and-suspenders overlap killer:
-    // each handle gets its OWN AbortController. The moment this handle
-    // ends (natural onended OR endEarly()), we set `ended = true`
-    // synchronously AND abort() this controller synchronously in the
-    // same tick -- no microtask delay. Any in-flight getApi() fetch
-    // that was started with this handle's signal dies immediately
-    // (its await fetch(...) throws an AbortError), so a stale tick that
-    // was already mid-fetch when the swap happened can't keep going and
-    // can't call endEarly() again on a dead handle. This is on top of
-    // (not instead of) the isEnded() checks already in the poll loop --
-    // deliberately redundant per request, clean up later.
-    const abortController = new AbortController();
-    let ended = false;
-    const markEnded = () => {
-      if (ended) return; // idempotent -- ok to call from multiple paths
-      ended = true;
-      abortController.abort();
-    };
     const promiseHandle = new Promise(resolve => {
       idle.onended = () => {
-        markEnded();
         clearInterval(rampTimerId);
         resolve(idle.playbackRate);
       };
@@ -701,16 +516,12 @@
       currtlyPlayingVideoNumber: number,
       promiseHandle,
       video: idle,
-      isEnded() { return ended; },
-      abortSignal: abortController.signal,
       setSpeed(rate) { targetRate = rate; },
       getCurrentRate() { return idle.playbackRate; },
       // early swap: fire the exact same onended path early, so main()'s
       // loop picks it up identically -- just without waiting for the
       // segment to actually end.
       endEarly() {
-        lastEndEarlyAt = performance.now();
-        markEnded(); // abort any in-flight getApi() for THIS handle NOW
         if (idle.onended) idle.onended();
       },
       // Buffer segment `number` into the slot that will be free for the
@@ -760,28 +571,8 @@
     document.getElementById("statActual").textContent = rate.toFixed(3) + "x";
   }
 
-  async function slowOrSpeedUpVideo(currentVideoHandle) {
-    // check #1: bail before even starting the fetch if we're already stale
-    if (currentVideoHandle.isEnded()) return;
-
-    let segments;
-    try {
-      ({ segments } = await getApi(undefined, currentVideoHandle.abortSignal));
-    } catch (e) {
-      // fetch was aborted because this handle ended while the request was
-      // in flight -- this is expected/normal, not an error, just stop.
-      if (e && e.name === 'AbortError') {
-        logD('slowOrSpeedUpVideo: fetch aborted (handle ended mid-request), stopping');
-        return;
-      }
-      throw e;
-    }
-
-    // check #2: bail immediately after the fetch resolves, before doing
-    // any rate-calc or (crucially) before reaching the endEarly() call
-    // further down -- covers the case where the handle ended in the
-    // gap between fetch completing and this check running.
-    if (currentVideoHandle.isEnded()) return;
+  async function slowOrSpeedUpVideo() {
+    const { segments } = await getApi();
 
     const maxId = segments.length ? Math.max(...segments.map(s => Number(s.id) || -1)) : -1;
     if (maxId > lastKnownLatest) {
@@ -848,36 +639,16 @@
     // finish, to avoid the last-moment stutter.
     const earlySwapMs = getEarlySwapMs();
     const remainingMs = (getSegmentDuration() - currentVideoHandle.video.currentTime) * 1000;
-    // check #3: last line of defense right before firing endEarly() --
-    // markEnded() inside endEarly() is already idempotent so this can't
-    // cause a double-fire either way, but skipping the call entirely
-    // avoids a pointless extra onended dispatch on an already-dead handle.
-    if (bufferedNext && remainingMs <= earlySwapMs && remainingMs > -500 && !currentVideoHandle.isEnded()) {
+    if (bufferedNext && remainingMs <= earlySwapMs && remainingMs > -500) {
       log('early swap: buffered segment', bufferedNext.number, 'ready,', remainingMs.toFixed(0), 'ms remaining');
       currentVideoHandle.endEarly();
     }
   }
 
-  // Self-scheduling poll loop: only queues the next check once the
-  // current one (including its getApi() fetch) has fully resolved, and
-  // stops the instant the handle's `ended` flag flips -- checked
-  // synchronously both before AND after each tick, so there's no
-  // microtask-delay window where a stale loop and a fresh loop for the
-  // next segment are both alive and both able to call endEarly().
-  async function startSetintervalLoopSlowdown(handle) {
-    async function tick() {
-      if (handle.isEnded()) {
-        logD('poll loop: handle already ended, not ticking, segment', handle.currtlyPlayingVideoNumber);
-        return;
-      }
-      await slowOrSpeedUpVideo(handle);
-      if (handle.isEnded()) {
-        logD('poll loop: handle ended during tick, stopping, segment', handle.currtlyPlayingVideoNumber);
-        return;
-      }
-      setTimeout(tick, getPollInterval());
-    }
-    tick();
+  async function startSetintervalLoopSlowdown(currentVideoHandle) {
+    const staleSafePromiseVideoHandle = currentVideoHandle.promiseHandle;
+    const id = setInterval(() => slowOrSpeedUpVideo(currentVideoHandle), getPollInterval());
+    return staleSafePromiseVideoHandle.finally(() => clearInterval(id));
   }
 
   async function main() {
@@ -950,72 +721,8 @@
     }
   }
 
-  ////////////////////
-  // DEBUG DUAL VIEW: mirror both real <video> elements (vd0/vd1) plus
-  // the freezeFrame canvas into always-visible debug canvases, updated
-  // every animation frame. This does NOT touch swap logic, does NOT
-  // create extra video loads/decodes -- it just repeatedly drawImage()s
-  // from the existing elements, so you can watch a swap happen live
-  // (which element goes blank/stale, which one catches up, what the
-  // freeze canvas is actually showing at that instant) instead of
-  // inferring it from timestamps in the log.
-  ////////////////////
-  let debugDualViewOn = false;
-  let debugRafId = null;
-
-  function toggleDebugDualView(on) {
-    debugDualViewOn = on;
-    document.getElementById("debugDualView").classList.toggle("shown", on);
-    if (on && debugRafId === null) {
-      debugDualViewTick();
-    } else if (!on && debugRafId !== null) {
-      cancelAnimationFrame(debugRafId);
-      debugRafId = null;
-    }
-  }
-
-  function debugDrawInto(canvasEl, sourceEl) {
-    if (!sourceEl) return;
-    try {
-      const w = sourceEl.videoWidth || sourceEl.width || 0;
-      const h = sourceEl.videoHeight || sourceEl.height || 0;
-      if (!w || !h) return; // nothing decoded yet, leave canvas as-is
-      if (canvasEl.width !== w) canvasEl.width = w;
-      if (canvasEl.height !== h) canvasEl.height = h;
-      canvasEl.getContext("2d").drawImage(sourceEl, 0, 0, w, h);
-    } catch (e) {
-      // draw can transiently fail (e.g. mid-seek) -- not worth logging
-      // every frame, just skip this tick
-    }
-  }
-
-  function debugDualViewTick() {
-    if (!debugDualViewOn) { debugRafId = null; return; }
-
-    const realVids = [document.getElementById("vd0"), document.getElementById("vd1")];
-    const freeze = document.getElementById("freezeFrame");
-    const debugCanvases = [document.getElementById("debugCanvas0"), document.getElementById("debugCanvas1")];
-    const debugFreezeCanvas = document.getElementById("debugCanvasFreeze");
-    const slots = [document.getElementById("debugSlot0"), document.getElementById("debugSlot1")];
-    const labels = [document.getElementById("debugLabel0"), document.getElementById("debugLabel1")];
-
-    realVids.forEach((v, i) => {
-      debugDrawInto(debugCanvases[i], v);
-      const isActive = v.classList.contains("active");
-      slots[i].classList.toggle("isCurrentlyActive", isActive);
-      labels[i].textContent =
-        `vd${i} ${isActive ? "[ACTIVE]" : "[idle]"} ` +
-        `t=${v.currentTime.toFixed(2)}s rate=${v.playbackRate.toFixed(2)}x ` +
-        `readyState=${v.readyState} paused=${v.paused}`;
-    });
-
-    debugDrawInto(debugFreezeCanvas, freeze);
-
-    debugRafId = requestAnimationFrame(debugDualViewTick);
-  }
-
   log("test log");
-  log("test log 2 new kaga");
+  log("test log 2");
 
 </script>
 
