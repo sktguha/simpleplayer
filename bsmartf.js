@@ -249,3 +249,4 @@ server.listen(PORT, () => {
 
     console.log(`sleep ${wait}ms`); await sleep(wait);
   }
+})();
