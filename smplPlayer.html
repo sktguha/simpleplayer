@@ -465,6 +465,8 @@
   let smoothedTarget = 1;
   let lastNewSegmentSeenAt = Date.now();
   let lastKnownLatest = -1;
+  let frontierWaitStartMs = 0;
+  let lastFrontierWaitLogMs = 0;
 
   function updateActualRateStat(rate) {
     document.getElementById("statActual").textContent = rate.toFixed(3) + "x";
@@ -511,6 +513,24 @@
       // as the remaining time in *this* segment actually demands.
       desiredRate = urgencyToRate(urgency, getMinRate(), curve);
       logD(`Next segment ${next} is not ready, urgency=${urgency.toFixed(2)}, desired rate=${desiredRate.toFixed(2)}`);
+      const playbackRate = currentVideoHandle.video.playbackRate;
+      if (
+        !window.lastLoggedRate ||
+        Math.abs(playbackRate - window.lastLoggedRate) > 0.1
+      ) {
+        window.lastLoggedRate = playbackRate;
+        log(
+          "waiting",
+          "playbackRate=",
+          playbackRate.toFixed(2),
+          "target=",
+          smoothedTarget.toFixed(2),
+          "desired=",
+          desiredRate.toFixed(2),
+          "urgency=",
+          urgency.toFixed(2)
+        );
+      }
     }
 
     // low-pass filter: smoothedTarget can only move targetSmoothingStep
@@ -559,9 +579,35 @@
       const nextValidNumber = await getNextValidNumber(currentVideoHandle.currtlyPlayingVideoNumber);
 
       if (nextValidNumber === null || nextValidNumber <= currentVideoHandle.currtlyPlayingVideoNumber) {
-        log('invalid nextValidNumber, waiting for 100ms and retrying...', nextValidNumber, currentVideoHandle.currtlyPlayingVideoNumber);
+        if (nextValidNumber === null) {
+          if (frontierWaitStartMs === 0) {
+            frontierWaitStartMs = performance.now();
+          }
+
+          const waitMs = performance.now() - frontierWaitStartMs;
+          if (waitMs - lastFrontierWaitLogMs >= 250) {
+            lastFrontierWaitLogMs = waitMs;
+            const latestNumber = await getLatestNumber();
+            const lagBehindLive = Math.max(0, latestNumber - currentVideoHandle.currtlyPlayingVideoNumber) * getSegmentDuration();
+            const currentPlaybackRate = currentVideoHandle?.video?.playbackRate ?? carryRate;
+            log(`frontier wait: waiting=${waitMs.toFixed(0)}ms carryRate=${carryRate.toFixed(2)} playbackRate=${currentPlaybackRate.toFixed(2)} lag=${lagBehindLive.toFixed(1)}s`);
+          }
+        } else {
+          log('invalid nextValidNumber, waiting for 100ms and retrying...', nextValidNumber, currentVideoHandle.currtlyPlayingVideoNumber);
+        }
+
         await sleep(10);
         continue;
+      }
+
+      if (frontierWaitStartMs !== 0) {
+        const waitMs = performance.now() - frontierWaitStartMs;
+        const latestNumber = await getLatestNumber();
+        const lagBehindLive = Math.max(0, latestNumber - currentVideoHandle.currtlyPlayingVideoNumber) * getSegmentDuration();
+        const currentPlaybackRate = currentVideoHandle?.video?.playbackRate ?? carryRate;
+        log(`frontier wait resolved: waiting=${waitMs.toFixed(0)}ms carryRate=${carryRate.toFixed(2)} playbackRate=${currentPlaybackRate.toFixed(2)} lag=${lagBehindLive.toFixed(1)}s`);
+        frontierWaitStartMs = 0;
+        lastFrontierWaitLogMs = 0;
       }
 
       currentVideoHandle = playVideo(nextValidNumber, carryRate);
