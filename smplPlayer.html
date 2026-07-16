@@ -103,9 +103,6 @@
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  const vids = [document.getElementById("vd0"), document.getElementById("vd1")];
-  let activeIdx = 0;
-
   function playVideo(number) {
     log(`Playing video segment ${number}`, currentVideoHandle);
 
@@ -137,50 +134,6 @@
       }
     };
   }
-  /**
-   * 
-  Exactly. latest - buffer only works if every segment exists.
-
-  With dead segments, you actually want:
-
-Get the latest ID.
-Walk backwards.
-Skip "dead" segments.
-Count only "ready" segments.
-Stop after BUFFER ready segments.
-Initialize currentVideoHandle.currtlyPlayingVideoNumber to the segment before that one (or -1 if you ran out).
-
-Something like:
-
-async function getBufferedStart(buffer) {
-    const { segments } = await getApi();
-
-    if (!segments.length) return -1;
-
-    let id = Math.max(...segments.map(s => s.id));
-    let readySeen = 0;
-
-    while (id >= 0) {
-        if (findStatusById(segments, id) === "ready") {
-            readySeen++;
-            if (readySeen === buffer)
-                return id - 1;
-        }
-        id--;
-    }
-
-    return -1;
-}
-
-This naturally handles:
-
-dead segments ✅
-gaps ✅
-startup with few segments ✅
-segment 0 edge case ✅
-
-It's much more robust than subtracting the buffer directly.
- */
 
   ////////////////////
   // MAIN LOOP
