@@ -63,6 +63,13 @@
   </div>
 
   <div>
+    <label>crossfade on swap (ms): <input type="number" id="crossfadeMs" value="0" min="0" style="width:6em"
+        onchange="localStorage.setItem('crossfadeMs', this.value)"></label>
+    <span style="color:gray;">0 = hard cut. >0 = fade opacity between segments. Safe now that the persistent
+      background canvas covers any gap underneath.</span>
+  </div>
+
+  <div>
     <label>min rate: <input type="text" id="minRate" value="0.4" style="width:4em"
         onchange="localStorage.setItem('minRate', this.value)"></label>
     <label>max rate: <input type="text" id="maxRate" value="4" style="width:4em"
@@ -195,6 +202,9 @@
   const maxRateInput = document.getElementById("maxRate");
   maxRateInput.value = localStorage.getItem("maxRate") || maxRateInput.value;
 
+  const crossfadeMsInput = document.getElementById("crossfadeMs");
+  crossfadeMsInput.value = localStorage.getItem("crossfadeMs") || crossfadeMsInput.value;
+
   const targetSmoothingStepInput = document.getElementById("targetSmoothingStep");
   targetSmoothingStepInput.value = localStorage.getItem("targetSmoothingStep") || targetSmoothingStepInput.value;
 
@@ -239,6 +249,7 @@
   const getRampInterval = () => parseFloat(rampIntervalInput.value) || 50;
   const getPollInterval = () => parseFloat(pollIntervalInput.value) || 50;
   const getSegmentDuration = () => parseFloat(segmentDurationInput.value) || 1;
+  const getCrossfadeMs = () => parseFloat(crossfadeMsInput.value) || 0;
   const getStartupBuffer = () => parseInt(startupBufferInput.value) || 0;
   const getRestartTimeoutMs = () => (parseFloat(restartTimeoutInput.value) || 4) * 1000;
   const getSlowTriggerBias = () => parseFloat(slowTriggerBiasInput.value) || 1.0;
@@ -427,6 +438,7 @@
     let swapped = false;
     let targetRate = carryRate;
     let rampTimerId = null;
+    const crossfadeMs = getCrossfadeMs();
 
     const doSwap = () => {
       if (swapped) return;
@@ -434,9 +446,31 @@
       idle.playbackRate = carryRate;
 
       const reveal = () => {
-        idle.style.display = "";
-        active.style.display = "none";
-        active.pause();
+        if (crossfadeMs > 0) {
+          // both elements are visible during the fade -- the persistent
+          // background canvas is behind both, so there's no gap even
+          // mid-transition. idle starts at opacity 0 so it eases in
+          // instead of hard-cutting.
+          idle.style.opacity = 0;
+          idle.style.transition = `opacity ${crossfadeMs}ms linear`;
+          active.style.transition = `opacity ${crossfadeMs}ms linear`;
+          idle.style.display = "";
+          requestAnimationFrame(() => {
+            idle.style.opacity = 1;
+            active.style.opacity = 0;
+          });
+          setTimeout(() => {
+            active.style.display = "none";
+            active.pause();
+            active.style.opacity = 1;
+            active.style.transition = "";
+            idle.style.transition = "";
+          }, crossfadeMs);
+        } else {
+          idle.style.display = "";
+          active.style.display = "none";
+          active.pause();
+        }
       };
 
       // don't reveal until the element has actually started producing
@@ -602,7 +636,7 @@
 
     // early swap: if next segment is already buffered, don't wait for
     // natural 'ended' -- hand off `earlySwapMs` before this segment would
-    // finish, to avoid the last-moment stutter
+    // finish, to avoid the last-moment stutter.
     const earlySwapMs = getEarlySwapMs();
     const remainingMs = (getSegmentDuration() - currentVideoHandle.video.currentTime) * 1000;
     if (bufferedNext && remainingMs <= earlySwapMs && remainingMs > -500) {
