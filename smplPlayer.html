@@ -7,9 +7,10 @@
   style="width:100%" /><button onclick="main()" style="zoom:3;">start</button>
 <label>swap timeout (ms): <input type="number" id="swapTimeout" value="1000" style="width:6em"
     onchange="localStorage.setItem('swapTimeout', this.value)"></label>
+<div id="logI" style="white-space:pre;font-family:monospace;"></div>
 <textarea id='ln'>function(){}</textarea>
 <textarea style="width: 100%; height: 100px;" id='log' placeholder="Logs will come here"></textarea>
-<button onclick="document.getElementById('log').style.display = 'block';">show log</button>
+<button onclick="document.getElementById('log').style.display = 'block'; flushLogToDom();">show log</button>
 <button onclick="document.getElementById('log').style.display = 'none';">hide log</button>
 <button onclick="downloadLogs();">download log</button>
 <label><input type="checkbox" id="tailLog" checked> tail -f</label>
@@ -30,6 +31,7 @@
   // ---- log ring buffer ----
   const LOG_RING_SIZE = 5000;
   let logRing = [];
+  let logDirty = false; // true when logRing has changed since last DOM flush
 
   function pad(n, len = 2) { return String(n).padStart(len, "0"); }
 
@@ -60,11 +62,20 @@
 
     logRing.push(line);
     if (logRing.length > LOG_RING_SIZE) logRing.shift();
+    logDirty = true;
 
+    flushLogToDom();
+  }
+
+  // only touches the textarea DOM when it's actually visible, so hidden logs
+  // don't cost layout/paint. Called again when "show log" is pressed.
+  function flushLogToDom() {
     const logEl = document.getElementById("log");
-    const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 20;
+    if (logEl.style.display === "none" || !logDirty) return;
 
+    const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 20;
     logEl.value = logRing.join("\n");
+    logDirty = false;
 
     if (document.getElementById("tailLog").checked && atBottom) {
       logEl.scrollTop = logEl.scrollHeight;
@@ -75,6 +86,14 @@
     if (document.getElementById("dg").checked) {
       log(...args);
     }
+  }
+
+  // logI: last-2-lines "important" status display, always visible, no history kept
+  let logILines = [];
+  function logI(text) {
+    logILines.push(text);
+    if (logILines.length > 2) logILines.shift();
+    document.getElementById("logI").textContent = logILines.join("\n");
   }
 
   function downloadLogs() {
@@ -125,8 +144,13 @@
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+  // Ramp settings for gradual speed changes (owned entirely inside playVideo)
+  const RAMP_STEP = 0.05;       // playbackRate change per tick
+  const RAMP_INTERVAL_MS = 50;  // how often we nudge the rate
+
   function playVideo(number) {
     log(`Playing video segment ${number}`, currentVideoHandle);
+    logI(`Playing segment ${number}`);
 
     const idleIdx = 1 - activeIdx;
     const idle = vids[idleIdx];
@@ -135,11 +159,10 @@
     idle.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
     idle.playbackRate = 1;
 
-    const promiseHandle = new Promise(resolve => {
-      idle.onended = () => resolve();
-    });
-
     let swapped = false;
+    let targetRate = 1;
+    let rampTimerId = null;
+
     const doSwap = () => {
       if (swapped) return;
       swapped = true;
@@ -148,17 +171,39 @@
       active.style.display = "none";
       active.pause();
       activeIdx = idleIdx;
+      startRamp();
     };
 
     idle.oncanplay = doSwap;
     setTimeout(doSwap, Number(swapTimeoutInput.value) || 1000);
 
+    function startRamp() {
+      rampTimerId = setInterval(() => {
+        const rate = idle.playbackRate;
+        if (Math.abs(rate - targetRate) < RAMP_STEP) {
+          idle.playbackRate = targetRate;
+          return;
+        }
+        idle.playbackRate = rate < targetRate
+          ? rate + RAMP_STEP
+          : rate - RAMP_STEP;
+      }, RAMP_INTERVAL_MS);
+    }
+
+    const promiseHandle = new Promise(resolve => {
+      idle.onended = () => {
+        clearInterval(rampTimerId);
+        resolve();
+      };
+    });
+
     return {
       currtlyPlayingVideoNumber: number,
       promiseHandle,
       video: idle,
+      // now just sets a target; playVideo's own ramp loop eases toward it
       setSpeed(rate) {
-        idle.playbackRate = rate;
+        targetRate = rate;
       }
     };
   }
@@ -175,18 +220,20 @@
 
     const ready = findStatusById(segments, next) === "ready";
     if (ready) {
-      log(`Next segment ${next} is ready, speeding up playback`);
+      logD(`Next segment ${next} is ready, speeding up playback`);
+      logI(`Speed target: ${MAX_RATE}x (next ready)`);
       currentVideoHandle.setSpeed(MAX_RATE);
     }
     else {
-      log(`Next segment ${next} is not ready, slowing down playback`);
+      logD(`Next segment ${next} is not ready, slowing down playback`);
+      logI(`Speed target: ${MIN_RATE}x (next not ready)`);
       currentVideoHandle.setSpeed(MIN_RATE);
     }
   }
 
   async function startSetintervalLoopSlowdown(currentVideoHandle) {
     const staleSafePromiseVideoHandle = currentVideoHandle.promiseHandle;
-    const id = setInterval(() => slowOrSpeedUpVideo(currentVideoHandle), 50);
+    const id = setInterval(() => slowOrSpeedUpVideo(currentVideoHandle), 300);
     // can be timing issue if next video its changed to ready before the interval is cleared, 
     // but its not a big deal as small local, fix if needed is inside the 
     // slowOrSpeedUpVideo function to check if the currentVideoHandle 
