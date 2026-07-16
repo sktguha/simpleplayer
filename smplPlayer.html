@@ -298,14 +298,76 @@
     return findStatusById(segments, next) === "ready" ? next : null;
   }
 
-  async function getLatestNumber() {
-    log('getLatestNumber called, curr is : ', currentVideoHandle?.currtlyPlayingVideoNumber);
+  async function getLatestNumbers() {
+    log('getLatestNumbers called, curr is : ', currentVideoHandle?.currtlyPlayingVideoNumber);
     const data = await getApi();
     const segments = Array.isArray(data?.segments) ? data.segments : [];
 
-    return segments.length
-      ? Math.max(...segments.map(s => Number(s?.id) || -1))
-      : -1;
+    const latestAny = segments.length ? Math.max(...segments.map(s => Number(s?.id) || -1)) : -1;
+    const ready = segments.filter(s => s.status === "ready");
+    const downloading = segments.filter(s => s.status === "downloading");
+    const pending = segments.filter(s => s.status === "pending");
+    const dead = segments.filter(s => s.status === "dead");
+
+    const latestReady = ready.length ? Math.max(...ready.map(s => Number(s?.id) || -1)) : -1;
+    const latestDownloading = downloading.length ? Math.max(...downloading.map(s => Number(s?.id) || -1)) : -1;
+    const latestPending = pending.length ? Math.max(...pending.map(s => Number(s?.id) || -1)) : -1;
+    const latestDead = dead.length ? Math.max(...dead.map(s => Number(s?.id) || -1)) : -1;
+    const readyGap = latestAny - latestReady;
+    const readyCount = ready.length;
+    const downloadingCount = downloading.length;
+    const pendingCount = pending.length;
+    const deadCount = dead.length;
+
+    log(
+      "LATEST DEBUG",
+      {
+        latestAny,
+        latestReady,
+        readyGap,
+        latestDownloading,
+        latestPending,
+        latestDead,
+        readyCount,
+        downloadingCount,
+        pendingCount,
+        deadCount
+      }
+    );
+
+    if (latestAny !== latestReady) {
+      const between = segments
+        .filter(s => {
+          const id = Number(s?.id);
+          return Number.isFinite(id) && id > latestReady && id <= latestAny;
+        })
+        .sort((a, b) => Number(a?.id || 0) - Number(b?.id || 0))
+        .map(s => `${Number(s?.id)} ${s?.status ?? "unknown"}`);
+
+      if (between.length) {
+        log(`Segments between latestReady and latestAny:\n${between.join("\n")}`);
+      } else {
+        log("Segments between latestReady and latestAny: none");
+      }
+    }
+
+    return {
+      latestAny,
+      latestReady,
+      readyGap,
+      latestDownloading,
+      latestPending,
+      latestDead,
+      readyCount,
+      downloadingCount,
+      pendingCount,
+      deadCount
+    };
+  }
+
+  async function getLatestNumber() {
+    const { latestAny } = await getLatestNumbers();
+    return latestAny;
   }
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -564,13 +626,14 @@
   }
 
   async function main() {
-    const frontierLatestVideoNumber = await getLatestNumber();
+    const { latestAny, latestReady } = await getLatestNumbers();
+    const frontierLatestVideoNumber = latestReady;
     const buffer = getStartupBuffer();
     const startNumber = Math.max(-1, frontierLatestVideoNumber - buffer);
-    log('got frontierLatestVideoNumber as', frontierLatestVideoNumber, 'starting from', startNumber, '(buffer=', buffer, ')');
+    log('got frontierLatestVideoNumber as', frontierLatestVideoNumber, 'latestAny', latestAny, 'latestReady', latestReady, 'starting from', startNumber, '(buffer=', buffer, ')');
     // this is only one initialisation place, else undefined
     currentVideoHandle = { currtlyPlayingVideoNumber: startNumber };
-    lastKnownLatest = frontierLatestVideoNumber;
+    lastKnownLatest = latestAny;
     lastNewSegmentSeenAt = Date.now();
 
     let carryRate = 1; // first segment ever: no prior rate to carry, start at 1x
@@ -587,10 +650,22 @@
           const waitMs = performance.now() - frontierWaitStartMs;
           if (waitMs - lastFrontierWaitLogMs >= 250) {
             lastFrontierWaitLogMs = waitMs;
-            const latestNumber = await getLatestNumber();
-            const lagBehindLive = Math.max(0, latestNumber - currentVideoHandle.currtlyPlayingVideoNumber) * getSegmentDuration();
+            const {
+              latestAny,
+              latestReady,
+              readyGap,
+              readyCount,
+              pendingCount,
+              downloadingCount,
+              deadCount,
+            } = await getLatestNumbers();
+            const currentPlayingSegment = currentVideoHandle?.currtlyPlayingVideoNumber;
+            const lagToAny = latestAny - currentPlayingSegment;
+            const lagToReady = latestReady - currentPlayingSegment;
+            const lagBehindAny = Math.max(0, latestAny - currentPlayingSegment) * getSegmentDuration();
+            const lagBehindReady = Math.max(0, latestReady - currentPlayingSegment) * getSegmentDuration();
             const currentPlaybackRate = currentVideoHandle?.video?.playbackRate ?? carryRate;
-            log(`frontier wait: waiting=${waitMs.toFixed(0)}ms carryRate=${carryRate.toFixed(2)} playbackRate=${currentPlaybackRate.toFixed(2)} lag=${lagBehindLive.toFixed(1)}s`);
+            log(`frontier wait: waiting=${waitMs.toFixed(0)}ms carryRate=${carryRate.toFixed(2)} playbackRate=${currentPlaybackRate.toFixed(2)} lagAny=${lagBehindAny.toFixed(1)}s lagReady=${lagBehindReady.toFixed(1)}s currentPlayingSegment=${currentPlayingSegment} latestAny=${latestAny} latestReady=${latestReady} readyGap=${readyGap} lagToAny=${lagToAny} lagToReady=${lagToReady} readyCount=${readyCount} pendingCount=${pendingCount} downloadingCount=${downloadingCount} deadCount=${deadCount}`);
           }
         } else {
           log('invalid nextValidNumber, waiting for 100ms and retrying...', nextValidNumber, currentVideoHandle.currtlyPlayingVideoNumber);
@@ -602,10 +677,22 @@
 
       if (frontierWaitStartMs !== 0) {
         const waitMs = performance.now() - frontierWaitStartMs;
-        const latestNumber = await getLatestNumber();
-        const lagBehindLive = Math.max(0, latestNumber - currentVideoHandle.currtlyPlayingVideoNumber) * getSegmentDuration();
+        const {
+          latestAny,
+          latestReady,
+          readyGap,
+          readyCount,
+          pendingCount,
+          downloadingCount,
+          deadCount,
+        } = await getLatestNumbers();
+        const currentPlayingSegment = currentVideoHandle?.currtlyPlayingVideoNumber;
+        const lagToAny = latestAny - currentPlayingSegment;
+        const lagToReady = latestReady - currentPlayingSegment;
+        const lagBehindAny = Math.max(0, latestAny - currentPlayingSegment) * getSegmentDuration();
+        const lagBehindReady = Math.max(0, latestReady - currentPlayingSegment) * getSegmentDuration();
         const currentPlaybackRate = currentVideoHandle?.video?.playbackRate ?? carryRate;
-        log(`frontier wait resolved: waiting=${waitMs.toFixed(0)}ms carryRate=${carryRate.toFixed(2)} playbackRate=${currentPlaybackRate.toFixed(2)} lag=${lagBehindLive.toFixed(1)}s`);
+        log(`frontier wait resolved: waiting=${waitMs.toFixed(0)}ms carryRate=${carryRate.toFixed(2)} playbackRate=${currentPlaybackRate.toFixed(2)} lagAny=${lagBehindAny.toFixed(1)}s lagReady=${lagBehindReady.toFixed(1)}s currentPlayingSegment=${currentPlayingSegment} latestAny=${latestAny} latestReady=${latestReady} readyGap=${readyGap} lagToAny=${lagToAny} lagToReady=${lagToReady} readyCount=${readyCount} pendingCount=${pendingCount} downloadingCount=${downloadingCount} deadCount=${deadCount}`);
         frontierWaitStartMs = 0;
         lastFrontierWaitLogMs = 0;
       }

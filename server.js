@@ -34,9 +34,22 @@ const downloaded = new Set(); // IDs of segments successfully downloaded
 const dead = new Set(); // IDs permanently dead (failed or grace expired)
 const pending = new Set(); // IDs skipped but still recoverable (within grace)
 const downloading = new Set(); // IDs currently mid-download (in-flight right now)
+const attempted = new Set(); // IDs ever attempted to download
+const attemptedAt = new Map(); // id -> timestamp of last attempt
 
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
+function logEvent(message) {
+  console.log(`[${new Date().toISOString()}] ${message}`);
+}
+
+function segmentLabel(id) {
+  return `segment_${String(id).padStart(6, "0")}.mp4`;
+}
+
+function describeSegmentState(id) {
+  const attemptedAtText = attemptedAt.has(id)
+    ? new Date(attemptedAt.get(id)).toISOString()
+    : "never";
+  return `downloaded=${downloaded.has(id)} downloading=${downloading.has(id)} pending=${pending.has(id)} dead=${dead.has(id)} attempted=${attempted.has(id)} attemptedAt=${attemptedAtText}`;
 }
 
 function fetchLatest() {
@@ -59,8 +72,11 @@ function download(id) {
       return;
     }
 
-    const file = `segment_${String(id).padStart(6, "0")}.mp4`;
+    const file = segmentLabel(id);
     const filePath = path.join(STREAM_DIR, file);
+
+    attempted.add(id);
+    attemptedAt.set(id, Date.now());
 
     const start = Date.now();
     downloading.add(id);
@@ -126,7 +142,7 @@ function handleEval(code) {
     process,
     // live references / primitives from module scope
     latest, lastSeen, segmentMs, lastTargetAttempted,
-    downloaded, dead, pending, downloading,
+    downloaded, dead, pending, downloading, attempted, attemptedAt,
     BASE, SEGMENT_MS, BACKFILL_THRESHOLD_MS, BACKFILL_GRACE, STREAM_DIR,
     result: undefined
   };
@@ -279,7 +295,7 @@ server.listen(PORT, () => {
     for (const id of expired) {
       pending.delete(id);
       dead.add(id);
-      console.log(`segment_${String(id).padStart(6, "0")}.mp4 DEAD (grace expired)`);
+      logEvent(`dead-transition id=${id} latest=${latest} reason=grace-expired ${describeSegmentState(id)}`);
     }
 
     const target = Math.max(0, latest - 1);
@@ -289,11 +305,12 @@ server.listen(PORT, () => {
       for (let id = lastTargetAttempted + 1; id < target; id++) {
         if (!downloaded.has(id)) {
           pending.add(id);
-          console.log(`segment_${String(id).padStart(6, "0")}.mp4 SKIPPED (recoverable)`);
+          logEvent(`skip-mark id=${id} latest=${latest} target=${target} reason=gap-skipped state=pending ${describeSegmentState(id)}`);
         }
       }
     }
 
+    logEvent(`download-attempt id=${target} latest=${latest} target=${target} lastTargetAttempted=${lastTargetAttempted} downloaded=${downloaded.size} pending=${pending.size} downloading=${downloading.size} dead=${dead.size}`);
     const result = await download(target);
     lastTargetAttempted = Math.max(lastTargetAttempted, target);
 
@@ -305,6 +322,7 @@ server.listen(PORT, () => {
       // Target failed – move to dead
       pending.delete(target);
       dead.add(target);
+      logEvent(`dead-transition id=${target} latest=${latest} reason=download-failed ${describeSegmentState(target)}`);
     }
 
     let wait = Math.max(0, Math.round(segmentMs - result.elapsed));
@@ -323,9 +341,7 @@ server.listen(PORT, () => {
       }
 
       if (retryId >= 0) {
-        console.log(
-          `Backfill segment_${String(retryId).padStart(6, "0")}.mp4`
-        );
+        logEvent(`backfill-attempt retryId=${retryId} latest=${latest} target=${target} lastTargetAttempted=${lastTargetAttempted} downloaded=${downloaded.size} pending=${pending.size} downloading=${downloading.size} dead=${dead.size}`);
 
         // Remove from pending/dead before attempt (will be re-added if fails)
         pending.delete(retryId);
@@ -334,10 +350,12 @@ server.listen(PORT, () => {
         const r = await download(retryId);
 
         if (r.ok) {
-          // success – already added to downloaded inside download()
+          logEvent(`backfill-result retryId=${retryId} outcome=success elapsed=${r.elapsed}ms ${describeSegmentState(retryId)}`);
         } else {
           // failure – move to dead
           dead.add(retryId);
+          logEvent(`dead-transition id=${retryId} latest=${latest} reason=download-failed ${describeSegmentState(retryId)}`);
+          logEvent(`backfill-result retryId=${retryId} outcome=failure elapsed=${r.elapsed}ms ${describeSegmentState(retryId)}`);
         }
 
         wait = Math.max(0, wait - r.elapsed);
