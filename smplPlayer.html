@@ -235,6 +235,38 @@
   // MAIN LOOP
   ////////////////////
 
+  // --- config ---
+  // how long a segment "should" be, in seconds. hardcoded for now since we're
+  // only dealing with 1s segments. if/when 2s segments come into this player
+  // too, this needs to become per-segment instead of a flat constant.
+  const SEGMENT_DURATION_S = 1;
+
+  // urgency: 0 = just started the segment, plenty of time left.
+  //          1 = segment is basically over, about to starve.
+  // deliberately NOT using video.duration here -- it's unreliable right after
+  // a .src swap (can be NaN until metadata loads) and we don't need it: we
+  // already know how long a segment is supposed to be. clamped because
+  // currentTime can overshoot the constant by a hair right at the end.
+  function getUrgency(video) {
+    const remaining = SEGMENT_DURATION_S - video.currentTime;
+    const urgency = 1 - (remaining / SEGMENT_DURATION_S);
+    return Math.min(1, Math.max(0, urgency));
+  }
+
+  // linear interpolation, nothing fancy
+  function lerp(a, b, t) {
+    return a + (b - a) * t;
+  }
+
+  // urgency -> target playback rate, for the "next segment not ready yet" case.
+  // at urgency 0 (just started, tons of time) we sit at 1x -- no reason to rush
+  // since we don't even know yet whether we'll need to. as urgency climbs
+  // toward 1 (segment almost done, next still not ready) we ease down toward
+  // minRate so we stretch the remaining buffer as far as it'll go.
+  function urgencyToRate(urgency, minRate) {
+    return lerp(1, minRate, urgency);
+  }
+
   async function slowOrSpeedUpVideo() {
     const { segments } = await getApi();
 
@@ -242,15 +274,24 @@
     while (findStatusById(segments, next) === "dead") next++;
 
     const ready = findStatusById(segments, next) === "ready";
+    const urgency = getUrgency(currentVideoHandle.video);
+
     if (ready) {
+      // next segment is sitting there ready to go -- no point holding back,
+      // ramp up to eat through any buffer we built up while waiting.
       logD(`Next segment ${next} is ready, speeding up playback`);
       logI(`Speed target: ${getMaxRate()}x (next ready)`);
       currentVideoHandle.setSpeed(getMaxRate());
     }
     else {
-      logD(`Next segment ${next} is not ready, slowing down playback`);
-      logI(`Speed target: ${getMinRate()}x (next not ready)`);
-      currentVideoHandle.setSpeed(getMinRate());
+      // next isn't ready. don't panic immediately -- only slow down as much as
+      // the remaining time in *this* segment actually demands. early in the
+      // segment that's ~1x (basically normal), late in the segment it eases
+      // down toward minRate.
+      const targetRate = urgencyToRate(urgency, getMinRate());
+      logD(`Next segment ${next} is not ready, urgency=${urgency.toFixed(2)}, target rate=${targetRate.toFixed(2)}`);
+      logI(`Speed target: ${targetRate.toFixed(2)}x (urgency ${(urgency * 100).toFixed(0)}%)`);
+      currentVideoHandle.setSpeed(targetRate);
     }
   }
 
