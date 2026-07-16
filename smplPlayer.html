@@ -602,7 +602,7 @@
 
     // early swap: if next segment is already buffered, don't wait for
     // natural 'ended' -- hand off `earlySwapMs` before this segment would
-    // finish, to avoid the last-moment stutter.
+    // finish, to avoid the last-moment stutter
     const earlySwapMs = getEarlySwapMs();
     const remainingMs = (getSegmentDuration() - currentVideoHandle.video.currentTime) * 1000;
     if (bufferedNext && remainingMs <= earlySwapMs && remainingMs > -500) {
