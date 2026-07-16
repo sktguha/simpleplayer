@@ -1,8 +1,8 @@
 <html>
 <video id="vd"></video>
-<input type="text" onload="this.value = localStorage.getItem('url') || this.value;"
-  onchange="localStorage.setItem('url', this.value);" id="url" value="http://localhost:7500/segment/segment_000000.mp4"
-  style="width:100%" />
+<input type="text" id="url" value="http://localhost:7500/segment/segment_000000.mp4"
+  onchange="localStorage.setItem('url', this.value)" style="width:100%" /><button onclick="main()"
+  style="zoom:3;">start</button>
 <textarea id='ln'>function(){}</textarea>
 <textarea style="width: 100%; height: 100px;" id='log' placeholder="Logs will come here"></textarea>
 <button onclick="document.getElementById('log').style.display = 'block';">show log</button>
@@ -90,7 +90,6 @@
   log("test log");
   log("test log 2");
 
-  main();
 </script>
 
 </html>
