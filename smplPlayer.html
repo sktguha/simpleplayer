@@ -105,12 +105,13 @@
   }
 
   async function startSetintervalLoopSlowdown(currentVideoHandle) {
+    const staleSafePromiseVideoHandle = currentVideoHandle.promiseHandle;
     const id = setInterval(() => slowOrSpeedUpVideo(currentVideoHandle), 300);
     // can be timing issue if next video its changed to ready before the interval is cleared, 
     // but its not a big deal as small local, fix if needed is inside the 
     // slowOrSpeedUpVideo function to check if the currentVideoHandle 
     // is still the same as the one passed in, after that getApi line.
-    return currentVideoHandle.promiseHandle.finally(() => clearInterval(id));
+    return staleSafePromiseVideoHandle.finally(() => clearInterval(id));
   }
 
   async function main() {
