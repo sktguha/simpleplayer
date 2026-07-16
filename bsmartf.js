@@ -84,7 +84,7 @@ function download(id) {
         resolve({ elapsed, ok: true });
       } else {
         // Remove incomplete file
-        try { fs.unlinkSync(filePath); } catch {}
+        try { fs.unlinkSync(filePath); } catch { }
         console.log(`${file} FAIL (exit ${code}) ${elapsed}ms`);
         resolve({ elapsed, ok: false });
       }
@@ -244,7 +244,8 @@ server.listen(PORT, () => {
           dead.add(retryId);
         }
 
-        wait = Math.max(0, wait - r.elapsed); }
+        wait = Math.max(0, wait - r.elapsed);
+      }
     }
 
     console.log(`sleep ${wait}ms`); await sleep(wait);
