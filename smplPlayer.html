@@ -628,10 +628,9 @@
 
     async function loopUntilgetNextValidNumber() {
       const nextValidNumber = await getNextValidNumber(currentVideoHandle.currtlyPlayingVideoNumber);
-      const sleepTime = 10; // ms
       if (nextValidNumber === null) {
-        log('no next valid number found, waiting ' + sleepTime + 'ms and retrying...');
-        await sleep(sleepTime);
+        log('no next valid number found, waiting 500ms and retrying...');
+        await sleep(500);
         return loopUntilgetNextValidNumber();
       }
       return nextValidNumber;
