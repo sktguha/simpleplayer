@@ -63,13 +63,6 @@
   </div>
 
   <div>
-    <label>crossfade on swap (ms): <input type="number" id="crossfadeMs" value="0" min="0" style="width:6em"
-        onchange="localStorage.setItem('crossfadeMs', this.value)"></label>
-    <span style="color:gray;">0 = hard cut (current behavior). >0 = fade opacity between segments to hide the
-      flash.</span>
-  </div>
-
-  <div>
     <label>min rate: <input type="text" id="minRate" value="0.4" style="width:4em"
         onchange="localStorage.setItem('minRate', this.value)"></label>
     <label>max rate: <input type="text" id="maxRate" value="4" style="width:4em"
@@ -202,9 +195,6 @@
   const maxRateInput = document.getElementById("maxRate");
   maxRateInput.value = localStorage.getItem("maxRate") || maxRateInput.value;
 
-  const crossfadeMsInput = document.getElementById("crossfadeMs");
-  crossfadeMsInput.value = localStorage.getItem("crossfadeMs") || crossfadeMsInput.value;
-
   const targetSmoothingStepInput = document.getElementById("targetSmoothingStep");
   targetSmoothingStepInput.value = localStorage.getItem("targetSmoothingStep") || targetSmoothingStepInput.value;
 
@@ -249,7 +239,6 @@
   const getRampInterval = () => parseFloat(rampIntervalInput.value) || 50;
   const getPollInterval = () => parseFloat(pollIntervalInput.value) || 50;
   const getSegmentDuration = () => parseFloat(segmentDurationInput.value) || 1;
-  const getCrossfadeMs = () => parseFloat(crossfadeMsInput.value) || 0;
   const getStartupBuffer = () => parseInt(startupBufferInput.value) || 0;
   const getRestartTimeoutMs = () => (parseFloat(restartTimeoutInput.value) || 4) * 1000;
   const getSlowTriggerBias = () => parseFloat(slowTriggerBiasInput.value) || 1.0;
@@ -402,7 +391,6 @@
     const idleIdx = 1 - activeIdx;
     const idle = vids[idleIdx];
     const active = vids[activeIdx];
-    const crossfadeMs = getCrossfadeMs();
 
     // reuse the buffered load if it's sitting in the right slot already,
     // otherwise start a fresh load -- same function either way.
@@ -421,12 +409,6 @@
     }
 
     idle.playbackRate = carryRate;
-
-    if (crossfadeMs > 0) {
-      idle.style.transition = `opacity ${crossfadeMs}ms linear`;
-      idle.style.opacity = 0;
-      idle.style.display = "";
-    }
 
     let swapped = false;
     let targetRate = carryRate;
@@ -452,25 +434,10 @@
       }
 
       const reveal = () => {
-        if (crossfadeMs > 0) {
-          active.style.transition = `opacity ${crossfadeMs}ms linear`;
-          idle.style.display = "";
-          requestAnimationFrame(() => {
-            idle.style.opacity = 1;
-            active.style.opacity = 0;
-          });
-          setTimeout(() => {
-            active.style.display = "none";
-            active.pause();
-            active.style.opacity = 1;
-            freeze.style.display = "none";
-          }, crossfadeMs);
-        } else {
-          idle.style.display = "";
-          active.style.display = "none";
-          active.pause();
-          freeze.style.display = "none";
-        }
+        idle.style.display = "";
+        active.style.display = "none";
+        active.pause();
+        freeze.style.display = "none";
       };
 
       // don't reveal until the element has actually started producing
