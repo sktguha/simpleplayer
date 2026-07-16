@@ -1,8 +1,3 @@
-I'll add two small text boxes for **fast bias** and **slowness bias** that scale the speed-up and slow-down portions of
-the desired rate before smoothing.
-The change is localized – just UI elements + a couple of lines in the control loop – so it's easy to review.
-
-```html
 <html>
 <span style="background-color: lightgray;">http://100.76.9.53:7500 tailscale etc, no trailing slash</span>
 <video id="vd0" style="width:100%"></video>
@@ -52,13 +47,21 @@ The change is localized – just UI elements + a couple of lines in the control 
     <span style="color:gray;">rate range the controller is allowed to choose between</span>
   </div>
 
-  <!-- new bias inputs -->
+  <!-- bias inputs -->
   <div>
     <label>fast bias: <input type="text" id="fastBias" value="1.0" style="width:4em"
         onchange="localStorage.setItem('fastBias', this.value)"></label>
     <label>slow bias: <input type="text" id="slowBias" value="1.0" style="width:4em"
         onchange="localStorage.setItem('slowBias', this.value)"></label>
     <span style="color:gray;">multiplier on speed-up / slow-down portion of desired rate (1.0 = no change)</span>
+  </div>
+
+  <!-- new: early swap threshold -->
+  <div>
+    <label>early swap threshold (%): <input type="text" id="earlySwapThreshold" value="95" style="width:4em"
+        onchange="localStorage.setItem('earlySwapThreshold', this.value)"></label>
+    <span style="color:gray;">swap to next segment when this % of current segment has played (0=immediate, 100=wait for
+      ended). Lower = earlier preload, smoother transitions.</span>
   </div>
 
   <div>
@@ -201,6 +204,10 @@ The change is localized – just UI elements + a couple of lines in the control 
   const slowBiasInput = document.getElementById("slowBias");
   slowBiasInput.value = localStorage.getItem("slowBias") || slowBiasInput.value;
 
+  // early swap threshold
+  const earlySwapThresholdInput = document.getElementById("earlySwapThreshold");
+  earlySwapThresholdInput.value = localStorage.getItem("earlySwapThreshold") || earlySwapThresholdInput.value;
+
   // 100.76.9.53 or hotspot ip etc
   let BASE_URL = document.getElementById("url").value;
   const getMinRate = () => parseFloat(minRateInput.value) || 0.4;
@@ -215,6 +222,11 @@ The change is localized – just UI elements + a couple of lines in the control 
   const getRestartTimeoutMs = () => (parseFloat(restartTimeoutInput.value) || 4) * 1000;
   const getFastBias = () => parseFloat(fastBiasInput.value) || 1.0;
   const getSlowBias = () => parseFloat(slowBiasInput.value) || 1.0;
+  const getEarlySwapThreshold = () => {
+    const v = parseFloat(earlySwapThresholdInput.value);
+    if (isNaN(v)) return 0.95;
+    return Math.min(1, Math.max(0, v / 100));
+  };
 
   // ---- log ring buffer ----
   const LOG_RING_SIZE = 5000;
@@ -278,6 +290,7 @@ The change is localized – just UI elements + a couple of lines in the control 
 
   // logI: last-2-lines "important" status display, always visible, no history kept
   let logILines = [];
+
   function logI(text) {
     logILines.push(text);
     if (logILines.length > 2) logILines.shift();
@@ -325,9 +338,9 @@ The change is localized – just UI elements + a couple of lines in the control 
     const data = await getApi();
     const segments = Array.isArray(data?.segments) ? data.segments : [];
 
-    return segments.length
-      ? Math.max(...segments.map(s => Number(s?.id) || -1))
-      : -1;
+    return segments.length ?
+      Math.max(...segments.map(s => Number(s?.id) || -1)) :
+      -1;
   }
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -359,6 +372,8 @@ The change is localized – just UI elements + a couple of lines in the control 
     let swapped = false;
     let targetRate = carryRate;
     let rampTimerId = null;
+    let resolveFn = null;
+    let isResolved = false;
 
     const doSwap = () => {
       if (swapped) return;
@@ -390,9 +405,11 @@ The change is localized – just UI elements + a couple of lines in the control 
     };
 
     idle.oncanplay = doSwap;
-    setTimeout(doSwap, Number(swapTimeoutInput.value) || 1000);
+    const swapTimeout = Number(swapTimeoutInput.value) || 1000;
+    const timeoutId = setTimeout(doSwap, swapTimeout);
 
     function startRamp() {
+      if (rampTimerId) clearInterval(rampTimerId);
       rampTimerId = setInterval(() => {
         const step = getRampStep();
         const rate = idle.playbackRate;
@@ -400,21 +417,35 @@ The change is localized – just UI elements + a couple of lines in the control 
           idle.playbackRate = targetRate;
           return;
         }
-        idle.playbackRate = rate < targetRate
-          ? rate + step
-          : rate - step;
+        idle.playbackRate = rate < targetRate ?
+          rate + step :
+          rate - step;
         updateActualRateStat(idle.playbackRate);
       }, getRampInterval());
     }
 
     const promiseHandle = new Promise(resolve => {
+      resolveFn = resolve;
       idle.onended = () => {
-        clearInterval(rampTimerId);
-        // hand off the rate this segment actually ended at, so the next
-        // playVideo() call can carry it forward instead of resetting to 1x
+        if (isResolved) return;
+        isResolved = true;
+        clearTimeout(timeoutId);
+        if (rampTimerId) clearInterval(rampTimerId);
         resolve(idle.playbackRate);
       };
     });
+
+    // early resolve function: called from control loop when early swap threshold is met
+    const earlyResolve = () => {
+      if (isResolved || !resolveFn) return;
+      logD(`Early resolve triggered for segment ${number} at ${(idle.currentTime / getSegmentDuration() * 100).toFixed(1)}%`);
+      isResolved = true;
+      clearTimeout(timeoutId);
+      if (rampTimerId) clearInterval(rampTimerId);
+      const rate = idle.playbackRate;
+      resolveFn(rate);
+      resolveFn = null;
+    };
 
     return {
       currtlyPlayingVideoNumber: number,
@@ -428,7 +459,10 @@ The change is localized – just UI elements + a couple of lines in the control 
       // without waiting for onended (used defensively, not required for the fix)
       getCurrentRate() {
         return idle.playbackRate;
-      }
+      },
+      earlyResolve,
+      // check if the video has already been resolved (ended or early)
+      isDone() { return isResolved; }
     };
   }
 
@@ -493,6 +527,9 @@ The change is localized – just UI elements + a couple of lines in the control 
   }
 
   async function slowOrSpeedUpVideo() {
+    if (!currentVideoHandle) return;
+    if (currentVideoHandle.isDone()) return; // already resolved, skip
+
     const { segments } = await getApi();
 
     // stall tracking: has a new segment id appeared recently?
@@ -527,12 +564,12 @@ The change is localized – just UI elements + a couple of lines in the control 
       // reaches setSpeed.
       desiredRate = getMaxRate();
       logD(`Next segment ${next} is ready, desired rate ${desiredRate}`);
-    }
-    else {
+    } else {
       // next isn't ready. don't panic immediately -- only slow down as much
       // as the remaining time in *this* segment actually demands.
       desiredRate = urgencyToRate(urgency, getMinRate(), curve);
-      logD(`Next segment ${next} is not ready, urgency=${urgency.toFixed(2)}, desired rate=${desiredRate.toFixed(2)}`);
+      logD(
+        `Next segment ${next} is not ready, urgency=${urgency.toFixed(2)}, desired rate=${desiredRate.toFixed(2)}`);
     }
 
     // ---- apply fast/slow bias to the desired rate ----
@@ -555,23 +592,42 @@ The change is localized – just UI elements + a couple of lines in the control 
       smoothedTarget += smoothedTarget < desiredRate ? smoothStep : -smoothStep;
     }
 
-    logI(`Speed target: ${smoothedTarget.toFixed(2)}x (desired ${desiredRate.toFixed(2)}x, urgency ${(urgency * 100).toFixed(0)}%)`);
+    logI(
+      `Speed target: ${smoothedTarget.toFixed(2)}x (desired ${desiredRate.toFixed(2)}x, urgency ${(urgency * 100).toFixed(0)}%)`
+    );
     currentVideoHandle.setSpeed(smoothedTarget);
 
     // ---- live status table ----
-    document.getElementById("statProgress").textContent = `${(urgency * 100).toFixed(0)}% through segment`;
+    document.getElementById("statProgress").textContent =
+      `${(urgency * 100).toFixed(0)}% through segment`;
     document.getElementById("statUrgency").textContent = urgency.toFixed(3);
-    document.getElementById("statReady").textContent = ready ? `yes (segment ${next})` : `no (waiting on ${next})`;
+    document.getElementById("statReady").textContent = ready ?
+      `yes (segment ${next})` :
+      `no (waiting on ${next})`;
     document.getElementById("statDesired").textContent = desiredRate.toFixed(3) + "x";
     document.getElementById("statSmoothed").textContent = smoothedTarget.toFixed(3) + "x";
+
+    // ---- EARLY SWAP CHECK ----
+    // If the current segment has passed the early swap threshold, resolve the
+    // promise early so the main loop can start loading the next segment.
+    // This effectively "fakes" the end of the segment and triggers the swap
+    // before the video actually ends, reducing the gap between segments.
+    const earlyThreshold = getEarlySwapThreshold();
+    // only trigger if: video still playing, not already ended, and urgency >= threshold
+    if (!currentVideoHandle.video.ended && urgency >= earlyThreshold) {
+      logD(
+        `Early swap triggered: urgency=${(urgency * 100).toFixed(1)}% >= threshold=${(earlyThreshold * 100).toFixed(1)}%`
+      );
+      currentVideoHandle.earlyResolve();
+    }
   }
 
   async function startSetintervalLoopSlowdown(currentVideoHandle) {
     const staleSafePromiseVideoHandle = currentVideoHandle.promiseHandle;
     const id = setInterval(() => slowOrSpeedUpVideo(currentVideoHandle), getPollInterval());
-    // can be timing issue if next video its changed to ready before the interval is cleared, 
-    // but its not a big deal as small local, fix if needed is inside the 
-    // slowOrSpeedUpVideo function to check if the currentVideoHandle 
+    // can be timing issue if next video its changed to ready before the interval is cleared,
+    // but its not a big deal as small local, fix if needed is inside the
+    // slowOrSpeedUpVideo function to check if the currentVideoHandle
     // is still the same as the one passed in, after that getApi line.
     return staleSafePromiseVideoHandle.finally(() => clearInterval(id));
   }
@@ -580,7 +636,8 @@ The change is localized – just UI elements + a couple of lines in the control 
     const frontierLatestVideoNumber = await getLatestNumber();
     const buffer = getStartupBuffer();
     const startNumber = Math.max(-1, frontierLatestVideoNumber - buffer);
-    log('got frontierLatestVideoNumber as', frontierLatestVideoNumber, 'starting from', startNumber, '(buffer=', buffer, ')');
+    log('got frontierLatestVideoNumber as', frontierLatestVideoNumber, 'starting from', startNumber, '(buffer=', buffer,
+      ')');
     // this is only one initialisation place, else undefined.
     currentVideoHandle = { currtlyPlayingVideoNumber: startNumber };
     lastKnownLatest = frontierLatestVideoNumber;
@@ -592,7 +649,8 @@ The change is localized – just UI elements + a couple of lines in the control 
       const nextValidNumber = await getNextValidNumber(currentVideoHandle.currtlyPlayingVideoNumber);
       const sleepTime = 10; // ms
       if (nextValidNumber === null || nextValidNumber <= currentVideoHandle.currtlyPlayingVideoNumber) {
-        log('got invalid nextValidNumber:' + nextValidNumber + ' waiting for ' + sleepTime + 'ms and retrying...', nextValidNumber, currentVideoHandle.currtlyPlayingVideoNumber);
+        log('got invalid nextValidNumber:' + nextValidNumber + ' waiting for ' + sleepTime + 'ms and retrying...',
+          nextValidNumber, currentVideoHandle.currtlyPlayingVideoNumber);
         await sleep(sleepTime);
         continue;
       }
@@ -634,9 +692,9 @@ The change is localized – just UI elements + a couple of lines in the control 
         body: JSON.stringify({ code })
       });
       const data = await response.json();
-      outEl.textContent = data.error
-        ? `ERROR: ${data.error}`
-        : JSON.stringify(data.result, null, 2);
+      outEl.textContent = data.error ?
+        `ERROR: ${data.error}` :
+        JSON.stringify(data.result, null, 2);
       log('eval result', data);
     } catch (e) {
       outEl.textContent = 'request failed: ' + String(e);
@@ -646,8 +704,6 @@ The change is localized – just UI elements + a couple of lines in the control 
 
   log("test log");
   log("test log 2");
-
 </script>
 
 </html>
-```
