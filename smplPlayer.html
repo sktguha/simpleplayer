@@ -1,3 +1,8 @@
+I'll add two small text boxes for **fast bias** and **slowness bias** that scale the speed-up and slow-down portions of
+the desired rate before smoothing.
+The change is localized – just UI elements + a couple of lines in the control loop – so it's easy to review.
+
+```html
 <html>
 <span style="background-color: lightgray;">http://100.76.9.53:7500 tailscale etc, no trailing slash</span>
 <video id="vd0" style="width:100%"></video>
@@ -45,6 +50,15 @@
     <label>max rate: <input type="text" id="maxRate" value="4" style="width:4em"
         onchange="localStorage.setItem('maxRate', this.value)"></label>
     <span style="color:gray;">rate range the controller is allowed to choose between</span>
+  </div>
+
+  <!-- new bias inputs -->
+  <div>
+    <label>fast bias: <input type="text" id="fastBias" value="1.0" style="width:4em"
+        onchange="localStorage.setItem('fastBias', this.value)"></label>
+    <label>slow bias: <input type="text" id="slowBias" value="1.0" style="width:4em"
+        onchange="localStorage.setItem('slowBias', this.value)"></label>
+    <span style="color:gray;">multiplier on speed-up / slow-down portion of desired rate (1.0 = no change)</span>
   </div>
 
   <div>
@@ -181,6 +195,12 @@
   const restartTimeoutInput = document.getElementById("restartTimeout");
   restartTimeoutInput.value = localStorage.getItem("restartTimeout") || restartTimeoutInput.value;
 
+  // bias inputs
+  const fastBiasInput = document.getElementById("fastBias");
+  fastBiasInput.value = localStorage.getItem("fastBias") || fastBiasInput.value;
+  const slowBiasInput = document.getElementById("slowBias");
+  slowBiasInput.value = localStorage.getItem("slowBias") || slowBiasInput.value;
+
   // 100.76.9.53 or hotspot ip etc
   let BASE_URL = document.getElementById("url").value;
   const getMinRate = () => parseFloat(minRateInput.value) || 0.4;
@@ -193,6 +213,8 @@
   const getCrossfadeMs = () => parseFloat(crossfadeMsInput.value) || 0;
   const getStartupBuffer = () => parseInt(startupBufferInput.value) || 0;
   const getRestartTimeoutMs = () => (parseFloat(restartTimeoutInput.value) || 4) * 1000;
+  const getFastBias = () => parseFloat(fastBiasInput.value) || 1.0;
+  const getSlowBias = () => parseFloat(slowBiasInput.value) || 1.0;
 
   // ---- log ring buffer ----
   const LOG_RING_SIZE = 5000;
@@ -513,6 +535,17 @@
       logD(`Next segment ${next} is not ready, urgency=${urgency.toFixed(2)}, desired rate=${desiredRate.toFixed(2)}`);
     }
 
+    // ---- apply fast/slow bias to the desired rate ----
+    // fastBias multiplies the amount of speed-up (desired - 1) when > 1.
+    // slowBias multiplies the amount of slow-down (1 - desired) when < 1.
+    const fastBias = getFastBias();
+    const slowBias = getSlowBias();
+    if (desiredRate > 1.0) {
+      desiredRate = 1.0 + (desiredRate - 1.0) * fastBias;
+    } else if (desiredRate < 1.0) {
+      desiredRate = 1.0 - (1.0 - desiredRate) * slowBias;
+    }
+
     // low-pass filter: smoothedTarget can only move targetSmoothingStep
     // per tick toward desiredRate, regardless of how far desiredRate jumped.
     const smoothStep = getTargetSmoothingStep();
@@ -617,3 +650,4 @@
 </script>
 
 </html>
+```
