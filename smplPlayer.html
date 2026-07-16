@@ -8,7 +8,10 @@
 <textarea style="width: 100%; height: 100px;" id='log' placeholder="Logs will come here"></textarea>
 <button onclick="document.getElementById('log').style.display = 'block';">show log</button>
 <button onclick="document.getElementById('log').style.display = 'none';">hide log</button>
+<button onclick="downloadLogs();">download log</button>
 <script>
+  const vids = [document.getElementById("vd0"), document.getElementById("vd1")];
+  let activeIdx = 0;
   let currentVideoHandle = null;
   const urlInput = document.getElementById("url");
   urlInput.value = localStorage.getItem("url") || urlInput.value;
@@ -16,6 +19,18 @@
   // 100.76.9.53 or hotspot ip etc
   let BASE_URL = document.getElementById("url").value;
   let MAX_RATE = 1.5, MIN_RATE = 0.5;
+
+  // ---- log ring buffer ----
+  const LOG_RING_SIZE = 5000;
+  let logRing = [];
+
+  function pad(n, len = 2) { return String(n).padStart(len, "0"); }
+
+  function humanTimestamp(d) {
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+      `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+  }
+
   function log(...args) {
     const text = args.map(arg => {
       if (typeof arg === "string") return arg;
@@ -32,8 +47,23 @@
 
     console.log(...args);
 
-    const log = document.getElementById("log");
-    log.value += "\n" + text;
+    const now = new Date();
+    const epochMicros = Math.round(now.getTime() * 1000); // ms -> us (JS has ms precision only)
+    const line = `${humanTimestamp(now)} ${text} [${epochMicros}]`;
+
+    logRing.push(line);
+    if (logRing.length > LOG_RING_SIZE) logRing.shift();
+
+    document.getElementById("log").value = logRing.join("\n");
+  }
+
+  function downloadLogs() {
+    const blob = new Blob([logRing.join("\n")], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `logs_${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   async function getApi(fn = function () { }) {
