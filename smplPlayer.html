@@ -344,9 +344,9 @@
     URL.revokeObjectURL(a.href);
   }
 
-  async function getApi(fn = function () { }) {
+  async function getApi(fn = function () { }, signal = undefined) {
     logD('getApi called, BASE_URL is : ', BASE_URL);
-    const response = await fetch(`${BASE_URL}/state`);
+    const response = await fetch(`${BASE_URL}/state`, signal ? { signal } : undefined);
     const data = await response.json();
     fn(data);
     logD('getApi done returning data, BASE_URL is : ', BASE_URL);
@@ -569,10 +569,27 @@
       }, getRampInterval());
     }
 
+    // BRUTE FORCE / belt-and-suspenders overlap killer:
+    // each handle gets its OWN AbortController. The moment this handle
+    // ends (natural onended OR endEarly()), we set `ended = true`
+    // synchronously AND abort() this controller synchronously in the
+    // same tick -- no microtask delay. Any in-flight getApi() fetch
+    // that was started with this handle's signal dies immediately
+    // (its await fetch(...) throws an AbortError), so a stale tick that
+    // was already mid-fetch when the swap happened can't keep going and
+    // can't call endEarly() again on a dead handle. This is on top of
+    // (not instead of) the isEnded() checks already in the poll loop --
+    // deliberately redundant per request, clean up later.
+    const abortController = new AbortController();
     let ended = false;
+    const markEnded = () => {
+      if (ended) return; // idempotent -- ok to call from multiple paths
+      ended = true;
+      abortController.abort();
+    };
     const promiseHandle = new Promise(resolve => {
       idle.onended = () => {
-        ended = true;
+        markEnded();
         clearInterval(rampTimerId);
         resolve(idle.playbackRate);
       };
@@ -583,6 +600,7 @@
       promiseHandle,
       video: idle,
       isEnded() { return ended; },
+      abortSignal: abortController.signal,
       setSpeed(rate) { targetRate = rate; },
       getCurrentRate() { return idle.playbackRate; },
       // early swap: fire the exact same onended path early, so main()'s
@@ -590,6 +608,7 @@
       // segment to actually end.
       endEarly() {
         lastEndEarlyAt = performance.now();
+        markEnded(); // abort any in-flight getApi() for THIS handle NOW
         if (idle.onended) idle.onended();
       },
       // Buffer segment `number` into the slot that will be free for the
@@ -640,7 +659,27 @@
   }
 
   async function slowOrSpeedUpVideo(currentVideoHandle) {
-    const { segments } = await getApi();
+    // check #1: bail before even starting the fetch if we're already stale
+    if (currentVideoHandle.isEnded()) return;
+
+    let segments;
+    try {
+      ({ segments } = await getApi(undefined, currentVideoHandle.abortSignal));
+    } catch (e) {
+      // fetch was aborted because this handle ended while the request was
+      // in flight -- this is expected/normal, not an error, just stop.
+      if (e && e.name === 'AbortError') {
+        logD('slowOrSpeedUpVideo: fetch aborted (handle ended mid-request), stopping');
+        return;
+      }
+      throw e;
+    }
+
+    // check #2: bail immediately after the fetch resolves, before doing
+    // any rate-calc or (crucially) before reaching the endEarly() call
+    // further down -- covers the case where the handle ended in the
+    // gap between fetch completing and this check running.
+    if (currentVideoHandle.isEnded()) return;
 
     const maxId = segments.length ? Math.max(...segments.map(s => Number(s.id) || -1)) : -1;
     if (maxId > lastKnownLatest) {
@@ -707,7 +746,11 @@
     // finish, to avoid the last-moment stutter.
     const earlySwapMs = getEarlySwapMs();
     const remainingMs = (getSegmentDuration() - currentVideoHandle.video.currentTime) * 1000;
-    if (bufferedNext && remainingMs <= earlySwapMs && remainingMs > -500) {
+    // check #3: last line of defense right before firing endEarly() --
+    // markEnded() inside endEarly() is already idempotent so this can't
+    // cause a double-fire either way, but skipping the call entirely
+    // avoids a pointless extra onended dispatch on an already-dead handle.
+    if (bufferedNext && remainingMs <= earlySwapMs && remainingMs > -500 && !currentVideoHandle.isEnded()) {
       log('early swap: buffered segment', bufferedNext.number, 'ready,', remainingMs.toFixed(0), 'ms remaining');
       currentVideoHandle.endEarly();
     }
@@ -721,9 +764,15 @@
   // next segment are both alive and both able to call endEarly().
   async function startSetintervalLoopSlowdown(handle) {
     async function tick() {
-      if (handle.isEnded()) return;
+      if (handle.isEnded()) {
+        logD('poll loop: handle already ended, not ticking, segment', handle.currtlyPlayingVideoNumber);
+        return;
+      }
       await slowOrSpeedUpVideo(handle);
-      if (handle.isEnded()) return;
+      if (handle.isEnded()) {
+        logD('poll loop: handle ended during tick, stopping, segment', handle.currtlyPlayingVideoNumber);
+        return;
+      }
       setTimeout(tick, getPollInterval());
     }
     tick();
