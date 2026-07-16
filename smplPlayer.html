@@ -60,6 +60,54 @@
       margin: 4px 0;
       padding: 2px 0;
     }
+
+    /* NEW PREVIEW STYLES */
+    #previewWrapper {
+      position: absolute;
+      z-index: 9999;
+      background: #000;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-radius: 4px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.6);
+      cursor: grab;
+      overflow: hidden;
+      display: none;
+      /* Default position: Top-Center */
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      user-select: none;
+    }
+
+    #previewWrapper:active {
+      cursor: grabbing;
+    }
+
+    #previewWrapper video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      pointer-events: none;
+      background: #111;
+    }
+
+    #previewCloseBtn {
+      position: absolute;
+      top: 0;
+      right: 0;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      padding: 4px 10px;
+      font-size: 14px;
+      z-index: 10000;
+      border-bottom-left-radius: 4px;
+    }
+
+    #previewCloseBtn:hover {
+      background: #a00;
+    }
   </style>
 </head>
 
@@ -69,6 +117,12 @@
   <canvas id="freezeFrame" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
   <video id="vd0"></video>
   <video id="vd1"></video>
+
+  <!-- NEW PREVIEW OVERLAY -->
+  <div id="previewWrapper">
+    <video id="previewVideo" muted></video>
+    <button id="previewCloseBtn">✕</button>
+  </div>
 </div>
 
 <fieldset>
@@ -242,6 +296,36 @@
   </div>
 </fieldset>
 
+<!-- NEW FEATURE: LIVE PREVIEW OVERLAY -->
+<fieldset>
+  <legend><b>Live preview overlay</b></legend>
+  <div class="row">
+    <input type="checkbox" id="previewEnabled"
+      onchange="localStorage.setItem('previewEnabled', this.checked); togglePreview();"><label for="previewEnabled">show
+      live preview overlay</label>
+  </div>
+  <div id="previewSettingsRow" style="display:none;">
+    <div class="row">
+      <label>Preview URL (separate source, no trailing slash): <input type="text" id="previewUrl"
+          placeholder="http://192.168.1.100:8080" style="width:60%"
+          onchange="localStorage.setItem('previewUrl', this.value); restartPreview();"></label>
+    </div>
+    <div class="row">
+      <label>Width (px): <input type="number" id="previewWidth" value="320" min="100" step="10" style="width:5em"
+          onchange="localStorage.setItem('previewWidth', this.value); resizePreview();"></label>
+      <label>Height (px): <input type="number" id="previewHeight" value="180" min="100" step="10" style="width:5em"
+          onchange="localStorage.setItem('previewHeight', this.value); resizePreview();"></label>
+    </div>
+    <div class="row">
+      <label>Poll interval (ms): <input type="number" id="previewPollInterval" value="1000" min="500" step="500"
+          style="width:5em"
+          onchange="localStorage.setItem('previewPollInterval', this.value); restartPreview();"></label>
+    </div>
+    <div class="row"><span style="color:gray;">Pulls latest.txt from the independent URL and plays the newest segment in
+        a floating, draggable box. Position is saved to localStorage.</span></div>
+  </div>
+</fieldset>
+
 <fieldset>
   <legend><b>Live status</b></legend>
   <div id="logI" style="white-space:pre;font-family:monospace;font-size:1.1em;"></div>
@@ -364,21 +448,37 @@
   const rateMonitorHistoryLenInput = document.getElementById("rateMonitorHistoryLen");
   rateMonitorHistoryLenInput.value = localStorage.getItem("rateMonitorHistoryLen") || rateMonitorHistoryLenInput.value;
 
+  // NEW PREVIEW SETTINGS
+  const previewEnabledInput = document.getElementById("previewEnabled");
+  const previewUrlInput = document.getElementById("previewUrl");
+  const previewWidthInput = document.getElementById("previewWidth");
+  const previewHeightInput = document.getElementById("previewHeight");
+  const previewPollIntervalInput = document.getElementById("previewPollInterval");
+
+  previewEnabledInput.checked = localStorage.getItem("previewEnabled") === "true";
+  previewUrlInput.value = localStorage.getItem("previewUrl") || "";
+  previewWidthInput.value = localStorage.getItem("previewWidth") || "320";
+  previewHeightInput.value = localStorage.getItem("previewHeight") || "180";
+  previewPollIntervalInput.value = localStorage.getItem("previewPollInterval") || "1000";
+
+  const previewWrapper = document.getElementById("previewWrapper");
+  const previewVideo = document.getElementById("previewVideo");
+  const previewCloseBtn = document.getElementById("previewCloseBtn");
+
   ////////////////////
   // SETTINGS / PROFILES
   ////////////////////
 
-  // every localStorage key that represents a UI setting, so profile
-  // save/load and JSON export always touch the same complete list.
   const SETTINGS_KEYS = [
     "url", "dg", "autoRestart", "restartTimeout", "startupBuffer",
     "swapTimeout", "earlySwapMs", "crossfadeMs", "minRate", "maxRate",
     "slowTriggerBias", "slowRampBias", "fastTriggerBias", "fastRampBias",
     "targetSmoothingStep", "rampStep", "rampInterval", "pollInterval",
-    "segmentDuration", "urgencyCurve", "rateMonitorEnabled", "rateMonitorInterval", "rateMonitorHistoryLen"
+    "segmentDuration", "urgencyCurve", "rateMonitorEnabled", "rateMonitorInterval", "rateMonitorHistoryLen",
+    "previewEnabled", "previewUrl", "previewWidth", "previewHeight", "previewPollInterval"
   ];
 
-  const CHECKBOX_KEYS = new Set(["dg", "autoRestart", "rateMonitorEnabled"]);
+  const CHECKBOX_KEYS = new Set(["dg", "autoRestart", "rateMonitorEnabled", "previewEnabled"]);
 
   function readCurrentSettings() {
     const out = {};
@@ -475,6 +575,8 @@
     localStorage.setItem(ACTIVE_PROFILE_KEY, name);
     BASE_URL = document.getElementById("url").value;
     toggleRateMonitor();
+    // Ensure the preview updates with the new profile state
+    togglePreview();
     log('loaded profile', name);
   }
 
@@ -506,7 +608,7 @@
   }
 
   ////////////////////
-  // LIVE RATE MONITOR (independent of ramp/control loop)
+  // LIVE RATE MONITOR
   ////////////////////
   let rateMonitorTimerId = null;
   let rateMonitorHistory = [];
@@ -570,6 +672,118 @@
       rateMonitorTimerId = null;
     }
   }
+
+  // NEW PREVIEW FUNCTIONS
+  let previewTimerId = null; // <--- FIX: DECLARED HERE
+
+  function resizePreview() {
+    previewWrapper.style.width = previewWidthInput.value + 'px';
+    previewWrapper.style.height = previewHeightInput.value + 'px';
+  }
+
+  function restartPreview() {
+    if (previewTimerId) clearInterval(previewTimerId);
+    if (!previewEnabledInput.checked) return;
+    const interval = Math.max(500, parseInt(previewPollIntervalInput.value) || 1000);
+    previewTimerId = setInterval(pollPreview, interval);
+    pollPreview(); // run immediately
+  }
+
+  function togglePreview() {
+    const enabled = previewEnabledInput.checked;
+    document.getElementById("previewSettingsRow").style.display = enabled ? "" : "none";
+    previewWrapper.style.display = enabled ? "block" : "none";
+    if (enabled) {
+      resizePreview();
+      // Restore position from localStorage
+      const posX = localStorage.getItem('previewPosX');
+      const posY = localStorage.getItem('previewPosY');
+      if (posX && posY) {
+        previewWrapper.style.transform = 'none';
+        previewWrapper.style.left = posX + 'px';
+        previewWrapper.style.top = posY + 'px';
+      } else {
+        // Default top-center
+        previewWrapper.style.transform = 'translateX(-50%)';
+        previewWrapper.style.left = '50%';
+        previewWrapper.style.top = '20px';
+      }
+      restartPreview();
+    } else if (previewTimerId) {
+      clearInterval(previewTimerId);
+      previewTimerId = null;
+      previewVideo.src = "";
+    }
+  }
+
+  async function pollPreview() {
+    const base = previewUrlInput.value.trim();
+    if (!base) return;
+    try {
+      const resp = await fetch(`${base}/latest.txt`);
+      if (!resp.ok) return;
+      const text = await resp.text();
+      // Grab the last line if multiple lines exist
+      const filename = text.trim().split('\n').pop();
+      if (!filename) return;
+      const src = `${base}/segment/${filename}`;
+      if (previewVideo.src !== src) {
+        previewVideo.src = src;
+        previewVideo.load();
+        previewVideo.play().catch(e => { /* autoplay restrictions */ });
+      }
+    } catch (e) {
+      // preview poll error
+    }
+  }
+
+  let isDragging = false;
+  let startX, startY, initialX, initialY;
+
+  function initDraggable() {
+    const el = previewWrapper;
+    el.addEventListener('mousedown', (e) => {
+      // Prevent dragging when clicking the close button
+      if (e.target === previewCloseBtn) return;
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = el.getBoundingClientRect();
+      initialX = rect.left;
+      initialY = rect.top;
+      // Override transforms
+      el.style.transform = 'none';
+      el.style.left = rect.left + 'px';
+      el.style.top = rect.top + 'px';
+      el.style.cursor = 'grabbing';
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      el.style.left = (initialX + dx) + 'px';
+      el.style.top = (initialY + dy) + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+      if (isDragging) {
+        isDragging = false;
+        previewWrapper.style.cursor = 'grab';
+        const left = parseInt(previewWrapper.style.left);
+        const top = parseInt(previewWrapper.style.top);
+        if (!isNaN(left) && !isNaN(top)) {
+          localStorage.setItem('previewPosX', left);
+          localStorage.setItem('previewPosY', top);
+        }
+      }
+    });
+  }
+
+  previewCloseBtn.addEventListener('click', () => {
+    previewEnabledInput.checked = false;
+    localStorage.setItem('previewEnabled', 'false');
+    togglePreview();
+  });
 
   // 100.76.9.53 or hotspot ip etc
   let BASE_URL = document.getElementById("url").value;
@@ -1006,6 +1220,9 @@
 
   refreshProfileDropdown();
   toggleRateMonitor();
+  initDraggable();
+  resizePreview();
+  togglePreview();
 
   log("test log");
   log("test log 2");
