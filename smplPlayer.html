@@ -267,6 +267,23 @@
     return lerp(1, minRate, urgency);
   }
 
+  // Why this exists: playVideo's ramp loop only smooths the *achieved*
+  // playbackRate toward whatever target it's given -- but setSpeed() itself
+  // was a hard assignment. So if "ready" flips on/off a couple times within
+  // one segment (which it does -- see the log, segments arrive irregularly),
+  // the target itself was snapping 1 -> 4 -> 0.4 -> 4 etc every single 50ms
+  // poll. The ramp then just chases whichever way the wind last blew,
+  // reversing direction constantly. That's the "snaps like crazy" symptom --
+  // it's not a race condition, so a lock wouldn't touch it. It's a missing
+  // low-pass filter on the target itself, one level up from the existing ramp.
+  //
+  // smoothedTarget is a second, slower-moving target that sits between the
+  // raw desired rate (which can still jump instantly) and setSpeed (which
+  // now only ever receives the smoothed value). Tune TARGET_SMOOTHING_STEP
+  // if this feels too sluggish or still too snappy -- larger = snappier.
+  let smoothedTarget = 1;
+  const TARGET_SMOOTHING_STEP = 0.15; // max change in target per 50ms tick
+
   async function slowOrSpeedUpVideo() {
     const { segments } = await getApi();
 
@@ -276,23 +293,36 @@
     const ready = findStatusById(segments, next) === "ready";
     const urgency = getUrgency(currentVideoHandle.video);
 
+    let desiredRate;
     if (ready) {
       // next segment is sitting there ready to go -- no point holding back,
-      // ramp up to eat through any buffer we built up while waiting.
-      logD(`Next segment ${next} is ready, speeding up playback`);
-      logI(`Speed target: ${getMaxRate()}x (next ready)`);
-      currentVideoHandle.setSpeed(getMaxRate());
+      // we WANT to ramp up to eat through any buffer we built up. but this
+      // desire still has to pass through the smoothing step below before it
+      // reaches setSpeed.
+      desiredRate = getMaxRate();
+      logD(`Next segment ${next} is ready, desired rate ${desiredRate}`);
     }
     else {
-      // next isn't ready. don't panic immediately -- only slow down as much as
-      // the remaining time in *this* segment actually demands. early in the
-      // segment that's ~1x (basically normal), late in the segment it eases
-      // down toward minRate.
-      const targetRate = urgencyToRate(urgency, getMinRate());
-      logD(`Next segment ${next} is not ready, urgency=${urgency.toFixed(2)}, target rate=${targetRate.toFixed(2)}`);
-      logI(`Speed target: ${targetRate.toFixed(2)}x (urgency ${(urgency * 100).toFixed(0)}%)`);
-      currentVideoHandle.setSpeed(targetRate);
+      // next isn't ready. don't panic immediately -- only slow down as much
+      // as the remaining time in *this* segment actually demands. early in
+      // the segment that's ~1x (basically normal), late in the segment it
+      // eases down toward minRate.
+      desiredRate = urgencyToRate(urgency, getMinRate());
+      logD(`Next segment ${next} is not ready, urgency=${urgency.toFixed(2)}, desired rate=${desiredRate.toFixed(2)}`);
     }
+
+    // low-pass filter: smoothedTarget can only move TARGET_SMOOTHING_STEP
+    // per tick toward desiredRate, regardless of how far desiredRate jumped.
+    // this is what actually kills the snapping -- ready/not-ready can flip
+    // as fast as it wants, the target we hand to the ramp won't jump with it.
+    if (Math.abs(smoothedTarget - desiredRate) < TARGET_SMOOTHING_STEP) {
+      smoothedTarget = desiredRate;
+    } else {
+      smoothedTarget += smoothedTarget < desiredRate ? TARGET_SMOOTHING_STEP : -TARGET_SMOOTHING_STEP;
+    }
+
+    logI(`Speed target: ${smoothedTarget.toFixed(2)}x (desired ${desiredRate.toFixed(2)}x, urgency ${(urgency * 100).toFixed(0)}%)`);
+    currentVideoHandle.setSpeed(smoothedTarget);
   }
 
   async function startSetintervalLoopSlowdown(currentVideoHandle) {
