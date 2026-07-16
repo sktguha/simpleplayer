@@ -75,7 +75,7 @@
         continue;
       }
       currentVideo = playVideo(number)
-      startSetintervalLoopSlowdown(currentVideo, getLatestNumber); // fn reference . also listen currentvideo.promise handle and clear itself internally
+      // startSetintervalLoopSlowdown(currentVideo, getLatestNumber); // fn reference . also listen currentvideo.promise handle and clear itself internally
       await currentVideo.promiseHandle
     }
   }
