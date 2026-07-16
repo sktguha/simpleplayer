@@ -8,7 +8,8 @@
 <button onclick="document.getElementById('log').style.display = 'none';">hide log</button>
 <script>
 
-  let BASE_URL = 'http://localhost:7500';
+  // 100.76.9.53
+  let BASE_URL = document.getElementById("url").value;
   let MAX_RATE = 1.5, MIN_RATE = 0.5;
   const urlInput = document.getElementById("url");
   urlInput.value = localStorage.getItem("url") || urlInput.value;
