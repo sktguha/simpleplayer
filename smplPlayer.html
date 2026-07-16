@@ -21,6 +21,49 @@
     #player video.active {
       opacity: 1;
     }
+
+    #debugDualView {
+      display: none;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    #debugDualView.shown {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .debugSlot {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #111;
+      border: 2px solid #444;
+    }
+
+    .debugSlot.isCurrentlyActive {
+      border-color: #2ecc40;
+    }
+
+    .debugSlot canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .debugSlot .debugLabel {
+      position: absolute;
+      top: 2px;
+      left: 4px;
+      color: #0f0;
+      font-family: monospace;
+      font-size: 0.9em;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 1px 4px;
+      z-index: 2;
+      pointer-events: none;
+    }
   </style>
 </head>
 
@@ -30,6 +73,24 @@
   <video id="vd0"></video>
   <video id="vd1"></video>
 </div>
+
+<label><input type="checkbox" id="debugDualViewToggle" onchange="toggleDebugDualView(this.checked)">
+  show both video elements live (debug swap visually)</label>
+<div id="debugDualView">
+  <div class="debugSlot" id="debugSlot0">
+    <div class="debugLabel" id="debugLabel0">vd0</div>
+    <canvas id="debugCanvas0"></canvas>
+  </div>
+  <div class="debugSlot" id="debugSlot1">
+    <div class="debugLabel" id="debugLabel1">vd1</div>
+    <canvas id="debugCanvas1"></canvas>
+  </div>
+  <div class="debugSlot" id="debugSlotFreeze">
+    <div class="debugLabel">freezeFrame canvas (what the fallback actually shows)</div>
+    <canvas id="debugCanvasFreeze"></canvas>
+  </div>
+</div>
+
 <label><input type="checkbox" id="dg">debug level log</label>
 <input type="text" id="url" value="http://100.76.9.53:7500" onchange="localStorage.setItem('url', this.value)"
   style="width:100%" /><button onclick="main()" style="zoom:3;">start</button>
@@ -889,8 +950,72 @@
     }
   }
 
+  ////////////////////
+  // DEBUG DUAL VIEW: mirror both real <video> elements (vd0/vd1) plus
+  // the freezeFrame canvas into always-visible debug canvases, updated
+  // every animation frame. This does NOT touch swap logic, does NOT
+  // create extra video loads/decodes -- it just repeatedly drawImage()s
+  // from the existing elements, so you can watch a swap happen live
+  // (which element goes blank/stale, which one catches up, what the
+  // freeze canvas is actually showing at that instant) instead of
+  // inferring it from timestamps in the log.
+  ////////////////////
+  let debugDualViewOn = false;
+  let debugRafId = null;
+
+  function toggleDebugDualView(on) {
+    debugDualViewOn = on;
+    document.getElementById("debugDualView").classList.toggle("shown", on);
+    if (on && debugRafId === null) {
+      debugDualViewTick();
+    } else if (!on && debugRafId !== null) {
+      cancelAnimationFrame(debugRafId);
+      debugRafId = null;
+    }
+  }
+
+  function debugDrawInto(canvasEl, sourceEl) {
+    if (!sourceEl) return;
+    try {
+      const w = sourceEl.videoWidth || sourceEl.width || 0;
+      const h = sourceEl.videoHeight || sourceEl.height || 0;
+      if (!w || !h) return; // nothing decoded yet, leave canvas as-is
+      if (canvasEl.width !== w) canvasEl.width = w;
+      if (canvasEl.height !== h) canvasEl.height = h;
+      canvasEl.getContext("2d").drawImage(sourceEl, 0, 0, w, h);
+    } catch (e) {
+      // draw can transiently fail (e.g. mid-seek) -- not worth logging
+      // every frame, just skip this tick
+    }
+  }
+
+  function debugDualViewTick() {
+    if (!debugDualViewOn) { debugRafId = null; return; }
+
+    const realVids = [document.getElementById("vd0"), document.getElementById("vd1")];
+    const freeze = document.getElementById("freezeFrame");
+    const debugCanvases = [document.getElementById("debugCanvas0"), document.getElementById("debugCanvas1")];
+    const debugFreezeCanvas = document.getElementById("debugCanvasFreeze");
+    const slots = [document.getElementById("debugSlot0"), document.getElementById("debugSlot1")];
+    const labels = [document.getElementById("debugLabel0"), document.getElementById("debugLabel1")];
+
+    realVids.forEach((v, i) => {
+      debugDrawInto(debugCanvases[i], v);
+      const isActive = v.classList.contains("active");
+      slots[i].classList.toggle("isCurrentlyActive", isActive);
+      labels[i].textContent =
+        `vd${i} ${isActive ? "[ACTIVE]" : "[idle]"} ` +
+        `t=${v.currentTime.toFixed(2)}s rate=${v.playbackRate.toFixed(2)}x ` +
+        `readyState=${v.readyState} paused=${v.paused}`;
+    });
+
+    debugDrawInto(debugFreezeCanvas, freeze);
+
+    debugRafId = requestAnimationFrame(debugDualViewTick);
+  }
+
   log("test log");
-  log("test log 2");
+  log("test log 2 new kaga");
 
 </script>
 
