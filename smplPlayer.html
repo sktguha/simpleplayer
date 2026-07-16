@@ -1,10 +1,10 @@
 <html>
 <span style="background-color: lightgray;">http://100.76.9.53:7500 tailscale etc, no trailing slash</span>
-<div id="videoContainer" style="position:relative;width:100%;overflow:hidden;">
+<div id="videoContainer" style="position:relative;width:100%;aspect-ratio:16/9;overflow:hidden;background:black;">
   <video id="vd0"
     style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:1;display:block;"></video>
   <video id="vd1"
-    style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:0;display:none;"></video>
+    style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:1;display:block;"></video>
 </div>
 <label><input type="checkbox" id="dg">debug level log</label>
 <input type="text" id="url" value="http://100.76.9.53:7500" onchange="localStorage.setItem('url', this.value)"
@@ -146,6 +146,13 @@
   let currentVideoHandle = null;
   const urlInput = document.getElementById("url");
   urlInput.value = localStorage.getItem("url") || urlInput.value;
+
+  // Create canvas overlay for smooth transitions
+  const canvas = document.createElement('canvas');
+  canvas.id = 'transitionOverlay';
+  canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:1;z-index:10;pointer-events:none;display:none;';
+  document.getElementById('videoContainer').appendChild(canvas);
+  const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: false });
 
   // ---- restore all tuning inputs from localStorage ----
   const swapTimeoutInput = document.getElementById("swapTimeout");
@@ -376,6 +383,52 @@
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+  // Helper function to capture a clean frame from a playing video
+  function captureCurrentFrame(video) {
+    return new Promise((resolve, reject) => {
+      if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        reject(new Error('Video not ready for capture'));
+        return;
+      }
+
+      // Ensure canvas matches video dimensions
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+
+      if (width === 0 || height === 0) {
+        reject(new Error('Video has no dimensions'));
+        return;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+
+      // Use requestVideoFrameCallback for precise frame timing
+      if ('requestVideoFrameCallback' in video) {
+        video.requestVideoFrameCallback((now, metadata) => {
+          try {
+            ctx.drawImage(video, 0, 0, width, height);
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+        });
+      } else {
+        // Fallback: requestAnimationFrame after ensuring ready state
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            try {
+              ctx.drawImage(video, 0, 0, width, height);
+              resolve();
+            } catch (e) {
+              reject(e);
+            }
+          });
+        });
+      }
+    });
+  }
+
   // carryRate: the rate the *previous* segment was actually running at when it
   // ended. Passed in so the new segment starts there instead of snapping to 1x.
   function playVideo(number, carryRate = 1) {
@@ -385,68 +438,152 @@
     const idleIdx = 1 - activeIdx;
     const idle = vids[idleIdx];
     const active = vids[activeIdx];
-
     const crossfadeMs = getCrossfadeMs();
 
+    // Apply consistent styling to both videos
     const applySharedVideoLayout = video => {
       video.style.position = "absolute";
       video.style.inset = "0";
       video.style.width = "100%";
       video.style.height = "100%";
       video.style.objectFit = "contain";
+      video.style.display = "block";
+      video.style.opacity = "1";
     };
 
     [active, idle].forEach(applySharedVideoLayout);
-    active.style.display = "block";
-    active.style.opacity = 1;
-    idle.style.display = "none";
-    idle.style.opacity = 0;
 
-    idle.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
-    // start at the rate we left off at, not 1x — avoids the hard reset/stutter
-    // at every swap. (.src assignment can itself reset playbackRate on some
-    // browsers, so we also re-apply it in doSwap right before play().)
-    idle.playbackRate = carryRate;
+    // Ensure canvas is hidden initially
+    canvas.style.display = 'none';
+    canvas.style.opacity = '1';
 
     let swapped = false;
     let targetRate = carryRate;
     let rampTimerId = null;
 
-    const doSwap = () => {
+    // The transition orchestration function
+    async function performTransition() {
       if (swapped) return;
       swapped = true;
-      idle.playbackRate = carryRate; // re-assert in case .src reset it
-      idle.play();
 
-      if (crossfadeMs > 0) {
-        // keep both videos absolutely stacked and change only opacity during the fade
+      const doImmediateSwap = () => {
+        // Hard cut fallback
         idle.style.display = "block";
-        idle.style.transition = `opacity ${crossfadeMs}ms linear`;
-        active.style.transition = `opacity ${crossfadeMs}ms linear`;
-        requestAnimationFrame(() => {
-          idle.style.opacity = 1;
-          active.style.opacity = 0;
-        });
-        setTimeout(() => {
-          active.style.display = "none";
-          active.pause();
-          active.style.opacity = 1; // reset for its next use
-          idle.style.opacity = 1;
-        }, crossfadeMs);
-      } else {
-        idle.style.display = "block";
-        active.style.display = "none";
+        idle.style.opacity = "1";
+        active.style.display = "block";
+        active.style.opacity = "1";
+        idle.playbackRate = carryRate;
+        idle.play();
         active.pause();
+        activeIdx = idleIdx;
+        startRamp();
+      };
+
+      if (crossfadeMs <= 0) {
+        doImmediateSwap();
+        return;
       }
 
-      activeIdx = idleIdx;
-      startRamp();
+      // Attempt graceful transition with canvas overlay
+      try {
+        // Step 1: Capture the last frame from the currently playing video
+        log('Capturing last frame from active video');
+        await captureCurrentFrame(active);
+
+        // Step 2: Set up the canvas overlay
+        canvas.style.display = 'block';
+        canvas.style.opacity = '1';
+
+        // Step 3: Ensure the new video is ready to display
+        // Wait for the new video to have at least one frame decoded
+        if (idle.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+          log('Waiting for idle video to have current data');
+          await new Promise((resolve) => {
+            const checkReady = () => {
+              if (idle.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+                resolve();
+              } else {
+                requestAnimationFrame(checkReady);
+              }
+            };
+            checkReady();
+          });
+        }
+
+        // Step 4: Position the new video correctly and start playing
+        idle.playbackRate = carryRate;
+        idle.style.opacity = '0';
+        await idle.play();
+
+        // Step 5: Wait for the new video to actually render its first frame
+        log('Waiting for idle video to render first frame');
+        await new Promise((resolve) => {
+          if ('requestVideoFrameCallback' in idle) {
+            idle.requestVideoFrameCallback(() => resolve());
+          } else {
+            // Fallback: wait for the next animation frame
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => resolve());
+            });
+          }
+        });
+
+        log('Starting crossfade transition');
+
+        // Step 6: Perform the crossfade
+        canvas.style.transition = `opacity ${crossfadeMs}ms ease-in-out`;
+        idle.style.transition = `opacity ${crossfadeMs}ms ease-in-out`;
+
+        // Force a reflow to ensure transitions start properly
+        canvas.offsetHeight;
+
+        // Start the fade
+        canvas.style.opacity = '0';
+        idle.style.opacity = '1';
+
+        // Step 7: Clean up after transition
+        setTimeout(() => {
+          canvas.style.display = 'none';
+          canvas.style.transition = '';
+          idle.style.transition = '';
+          active.style.opacity = '1';
+          active.pause();
+          active.removeAttribute('src'); // Clear old source
+
+          // Mark the new video as active
+          activeIdx = idleIdx;
+          startRamp();
+          log('Crossfade transition complete');
+        }, crossfadeMs + 50); // Small buffer to ensure transition completes
+
+      } catch (error) {
+        log('Canvas transition failed, falling back to hard cut:', error);
+        canvas.style.display = 'none';
+        doImmediateSwap();
+      }
+    }
+
+    // Set up the new video source
+    idle.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
+    idle.playbackRate = carryRate;
+    idle.preload = 'auto';
+
+    // Trigger transition when video is ready
+    idle.oncanplay = () => {
+      log('idle video oncanplay fired');
+      performTransition();
     };
 
-    idle.oncanplay = doSwap;
-    setTimeout(doSwap, Number(swapTimeoutInput.value) || 1000);
+    // Safety timeout
+    setTimeout(() => {
+      if (!swapped) {
+        log('Swap timeout reached, forcing transition');
+        performTransition();
+      }
+    }, Number(swapTimeoutInput.value) || 1000);
 
     function startRamp() {
+      if (rampTimerId) clearInterval(rampTimerId);
       rampTimerId = setInterval(() => {
         const step = getRampStep();
         const rate = idle.playbackRate;
@@ -463,9 +600,7 @@
 
     const promiseHandle = new Promise(resolve => {
       idle.onended = () => {
-        clearInterval(rampTimerId);
-        // hand off the rate this segment actually ended at, so the next
-        // playVideo() call can carry it forward instead of resetting to 1x
+        if (rampTimerId) clearInterval(rampTimerId);
         resolve(idle.playbackRate);
       };
     });
@@ -474,12 +609,9 @@
       currtlyPlayingVideoNumber: number,
       promiseHandle,
       video: idle,
-      // now just sets a target; playVideo's own ramp loop eases toward it
       setSpeed(rate) {
         targetRate = rate;
       },
-      // lets external code read "what rate is this segment on right now"
-      // without waiting for onended (used defensively, not required for the fix)
       getCurrentRate() {
         return idle.playbackRate;
       }
