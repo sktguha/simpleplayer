@@ -15,6 +15,11 @@
       height: 100%;
       object-fit: contain;
       pointer-events: none;
+      opacity: 0;
+    }
+
+    #player video.active {
+      opacity: 1;
     }
   </style>
 </head>
@@ -107,6 +112,13 @@
     <label>ramp interval (ms): <input type="number" id="rampInterval" value="50" step="10" style="width:5em"
         onchange="localStorage.setItem('rampInterval', this.value)"></label>
     <span style="color:gray;">how fast the *actual* video.playbackRate chases the smoothed target</span>
+  </div>
+
+  <div>
+    <label>proportional ramp factor: <input type="number" id="proportionalRampFactor" value="0.2" step="0.05" min="0"
+        style="width:5em" onchange="localStorage.setItem('proportionalRampFactor', this.value)"></label>
+    <span style="color:gray;">extra step size = distance-from-target × this factor. Higher = large carry-over rate
+      mismatches (e.g. swapping in at 1.65x) settle faster. 0 = old fixed-step-only behavior.</span>
   </div>
 
   <div>
@@ -213,6 +225,9 @@
   const rampIntervalInput = document.getElementById("rampInterval");
   rampIntervalInput.value = localStorage.getItem("rampInterval") || rampIntervalInput.value;
 
+  const proportionalRampFactorInput = document.getElementById("proportionalRampFactor");
+  proportionalRampFactorInput.value = localStorage.getItem("proportionalRampFactor") || proportionalRampFactorInput.value;
+
   const pollIntervalInput = document.getElementById("pollInterval");
   pollIntervalInput.value = localStorage.getItem("pollInterval") || pollIntervalInput.value;
 
@@ -247,6 +262,10 @@
   const getTargetSmoothingStep = () => parseFloat(targetSmoothingStepInput.value) || 0.15;
   const getRampStep = () => parseFloat(rampStepInput.value) || 0.05;
   const getRampInterval = () => parseFloat(rampIntervalInput.value) || 50;
+  const getProportionalRampFactor = () => {
+    const v = parseFloat(proportionalRampFactorInput.value);
+    return Number.isNaN(v) ? 0.2 : v;
+  };
   const getPollInterval = () => parseFloat(pollIntervalInput.value) || 50;
   const getSegmentDuration = () => parseFloat(segmentDurationInput.value) || 1;
   const getCrossfadeMs = () => parseFloat(crossfadeMsInput.value) || 0;
@@ -447,28 +466,24 @@
 
       const reveal = () => {
         if (crossfadeMs > 0) {
-          // both elements are visible during the fade -- the persistent
-          // background canvas is behind both, so there's no gap even
-          // mid-transition. idle starts at opacity 0 so it eases in
-          // instead of hard-cutting.
-          idle.style.opacity = 0;
+          // both elements stay in the render tree throughout (never
+          // display:none -- that's what let the browser deprioritize
+          // decode on the hidden one). idle starts at opacity 0 so it
+          // eases in instead of hard-cutting.
           idle.style.transition = `opacity ${crossfadeMs}ms linear`;
           active.style.transition = `opacity ${crossfadeMs}ms linear`;
-          idle.style.display = "";
           requestAnimationFrame(() => {
-            idle.style.opacity = 1;
-            active.style.opacity = 0;
+            idle.classList.add("active");
+            active.classList.remove("active");
           });
           setTimeout(() => {
-            active.style.display = "none";
             active.pause();
-            active.style.opacity = 1;
             active.style.transition = "";
             idle.style.transition = "";
           }, crossfadeMs);
         } else {
-          idle.style.display = "";
-          active.style.display = "none";
+          idle.classList.add("active");
+          active.classList.remove("active");
           active.pause();
         }
       };
@@ -494,12 +509,22 @@
 
     function startRamp() {
       rampTimerId = setInterval(() => {
-        const step = getRampStep();
+        const baseStep = getRampStep();
         const rate = idle.playbackRate;
-        if (Math.abs(rate - targetRate) < step) {
+        const distance = Math.abs(rate - targetRate);
+        if (distance < baseStep) {
           idle.playbackRate = targetRate;
           return;
         }
+        // proportional component: the further playbackRate currently is
+        // from where it needs to go, the bigger a step we take -- this
+        // is what makes a large carry-over mismatch (e.g. swapping in at
+        // 1.65x when target is ~1x) settle quickly instead of crawling
+        // down at the same fixed rampStep used for small corrections.
+        // Floor of baseStep preserves existing fine-grained smoothness
+        // once close to target.
+        const proportionalStep = distance * getProportionalRampFactor();
+        const step = Math.max(baseStep, proportionalStep);
         idle.playbackRate = rate < targetRate ? rate + step : rate - step;
         updateActualRateStat(idle.playbackRate);
       }, getRampInterval());
