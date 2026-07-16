@@ -427,6 +427,15 @@
   let bufferedNext = null;
   // timing instrumentation: when did the most recent endEarly() fire, so
   // we can measure real latency to the next segment's actual reveal.
+  // NOTE: this measurement is contaminated unless split by path -- see
+  // the alreadyBuffered branch below. "MEASURED early-swap latency" used
+  // to average two different quantities together:
+  //   (a) buffered path: loadPromise resolves instantly, so the whole
+  //       number is just idle.play() -> onplaying (decoder/GPU handoff).
+  //   (b) cold path: loadPromise waits on network fetch + el.load() +
+  //       readyState>=3/oncanplay, which is a much larger, noisier
+  //       quantity representing "bufferNext ran late", not swap cost.
+  // These are now logged separately (see doSwap/reveal below).
   let lastEndEarlyAt = null;
 
   // carryRate: the rate the *previous* segment was actually running at when
@@ -447,6 +456,10 @@
       bufferedNext = null;
     }
     let loadPromise;
+    // timestamp taken the instant we know which path we're on, so the
+    // cold-path branch can measure its own load wait independently of
+    // whatever endEarly() timestamp happens to be sitting around.
+    const loadStartedAt = performance.now();
     if (alreadyBuffered) {
       log("Using buffered video", number);
       bufferedNext = null;
@@ -467,10 +480,28 @@
       swapped = true;
       idle.playbackRate = carryRate;
 
+      // stamped right as doSwap actually runs (i.e. loadPromise has
+      // resolved) -- this is the boundary between "waiting for the
+      // segment to be ready" and "asking the element to play it".
+      const loadDoneAt = performance.now();
+
       const reveal = () => {
         if (lastEndEarlyAt !== null) {
-          const latency = performance.now() - lastEndEarlyAt;
-          log(`MEASURED early-swap latency: ${latency.toFixed(1)}ms (endEarly -> actual reveal for segment ${number})`);
+          const handoffMs = performance.now() - loadDoneAt;
+          if (alreadyBuffered) {
+            // pure decoder/GPU handoff cost: element already had a
+            // decoded frame sitting ready, loadPromise was instant.
+            log(`MEASURED buffered-swap handoff: ${handoffMs.toFixed(1)}ms (endEarly -> onplaying, segment ${number}, prebuffered=true)`);
+          } else {
+            // cold path: break out how much of the total was spent
+            // waiting on loadIntoElement (network fetch + decode-ready)
+            // vs. the actual play()->onplaying handoff, so a slow
+            // number here points at "buffer earlier" rather than being
+            // confused with decoder overhead.
+            const loadWaitMs = loadDoneAt - lastEndEarlyAt;
+            const totalMs = loadWaitMs + handoffMs;
+            log(`MEASURED cold-swap latency: ${loadWaitMs.toFixed(1)}ms load-wait + ${handoffMs.toFixed(1)}ms handoff = ${totalMs.toFixed(1)}ms total (endEarly -> onplaying, segment ${number}, prebuffered=false)`);
+          }
           lastEndEarlyAt = null;
         }
         if (crossfadeMs > 0) {
@@ -538,8 +569,10 @@
       }, getRampInterval());
     }
 
+    let ended = false;
     const promiseHandle = new Promise(resolve => {
       idle.onended = () => {
+        ended = true;
         clearInterval(rampTimerId);
         resolve(idle.playbackRate);
       };
@@ -549,6 +582,7 @@
       currtlyPlayingVideoNumber: number,
       promiseHandle,
       video: idle,
+      isEnded() { return ended; },
       setSpeed(rate) { targetRate = rate; },
       getCurrentRate() { return idle.playbackRate; },
       // early swap: fire the exact same onended path early, so main()'s
@@ -605,7 +639,7 @@
     document.getElementById("statActual").textContent = rate.toFixed(3) + "x";
   }
 
-  async function slowOrSpeedUpVideo() {
+  async function slowOrSpeedUpVideo(currentVideoHandle) {
     const { segments } = await getApi();
 
     const maxId = segments.length ? Math.max(...segments.map(s => Number(s.id) || -1)) : -1;
@@ -679,10 +713,20 @@
     }
   }
 
-  async function startSetintervalLoopSlowdown(currentVideoHandle) {
-    const staleSafePromiseVideoHandle = currentVideoHandle.promiseHandle;
-    const id = setInterval(() => slowOrSpeedUpVideo(currentVideoHandle), getPollInterval());
-    return staleSafePromiseVideoHandle.finally(() => clearInterval(id));
+  // Self-scheduling poll loop: only queues the next check once the
+  // current one (including its getApi() fetch) has fully resolved, and
+  // stops the instant the handle's `ended` flag flips -- checked
+  // synchronously both before AND after each tick, so there's no
+  // microtask-delay window where a stale loop and a fresh loop for the
+  // next segment are both alive and both able to call endEarly().
+  async function startSetintervalLoopSlowdown(handle) {
+    async function tick() {
+      if (handle.isEnded()) return;
+      await slowOrSpeedUpVideo(handle);
+      if (handle.isEnded()) return;
+      setTimeout(tick, getPollInterval());
+    }
+    tick();
   }
 
   async function main() {
