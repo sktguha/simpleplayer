@@ -32,6 +32,7 @@
   }
 
   async function getLatestNumber() {
+    log('getLatestNumber called, curr is : ', currentVideoHandle.currVideoNumber);
     const data = await getApi();
     const segments = Array.isArray(data?.segments) ? data.segments : [];
 
@@ -47,6 +48,7 @@
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   function playVideo(number) {
+    log(`Playing video segment ${number}`, currVideoHandle);
     const video = document.getElementById("vd");
 
     video.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
