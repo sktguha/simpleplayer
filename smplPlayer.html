@@ -1,6 +1,7 @@
 <html>
 <span style="background-color: lightgray;">http://100.76.9.53:7500 tailscale etc, no trailing slash</span>
-<video id="vd"></video>
+<video id="vd0" style="width:100%"></video>
+<video id="vd1" style="width:100%;display:none"></video>
 <input type="text" id="url" value="http://100.76.9.53:7500" onchange="localStorage.setItem('url', this.value)"
   style="width:100%" /><button onclick="main()" style="zoom:3;">start</button>
 <textarea id='ln'>function(){}</textarea>
@@ -72,34 +73,45 @@
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+  const vids = [document.getElementById("vd0"), document.getElementById("vd1")];
+  let activeIdx = 0;
+
   function playVideo(number) {
     log(`Playing video segment ${number}`, currentVideoHandle);
-    const video = document.getElementById("vd");
 
-    video.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
-    video.playbackRate = 1;
+    const idleIdx = 1 - activeIdx;
+    const idle = vids[idleIdx];
+    const active = vids[activeIdx];
+
+    idle.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
+    idle.playbackRate = 1;
 
     const promiseHandle = new Promise(resolve => {
-      video.onended = () => resolve();
+      idle.onended = () => resolve();
     });
 
-    video.play();
+    idle.oncanplay = () => {
+      idle.play();
+      idle.style.display = "";
+      active.style.display = "none";
+      active.pause();
+      activeIdx = idleIdx;
+    };
 
     return {
       currtlyPlayingVideoNumber: number,
       promiseHandle,
-      video,
+      video: idle,
       setSpeed(rate) {
-        video.playbackRate = rate;
+        idle.playbackRate = rate;
       }
     };
   }
-
   /**
    * 
   Exactly. latest - buffer only works if every segment exists.
 
-With dead segments, you actually want:
+  With dead segments, you actually want:
 
 Get the latest ID.
 Walk backwards.
