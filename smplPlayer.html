@@ -55,6 +55,13 @@
   </div>
 
   <div>
+    <label>early swap margin (ms): <input type="number" id="earlySwapMs" value="80" style="width:6em"
+        onchange="localStorage.setItem('earlySwapMs', this.value)"></label>
+    <span style="color:gray;">if next segment is already buffered, hand off this many ms before the current segment
+      would naturally end</span>
+  </div>
+
+  <div>
     <label>crossfade on swap (ms): <input type="number" id="crossfadeMs" value="0" min="0" style="width:6em"
         onchange="localStorage.setItem('crossfadeMs', this.value)"></label>
     <span style="color:gray;">0 = hard cut (current behavior). >0 = fade opacity between segments to hide the
@@ -186,6 +193,9 @@
   const swapTimeoutInput = document.getElementById("swapTimeout");
   swapTimeoutInput.value = localStorage.getItem("swapTimeout") || swapTimeoutInput.value;
 
+  const earlySwapMsInput = document.getElementById("earlySwapMs");
+  earlySwapMsInput.value = localStorage.getItem("earlySwapMs") || earlySwapMsInput.value;
+
   const minRateInput = document.getElementById("minRate");
   minRateInput.value = localStorage.getItem("minRate") || minRateInput.value;
   const maxRateInput = document.getElementById("maxRate");
@@ -245,6 +255,7 @@
   const getSlowRampBias = () => parseFloat(slowRampBiasInput.value) || 1.0;
   const getFastTriggerBias = () => parseFloat(fastTriggerBiasInput.value) || 1.0;
   const getFastRampBias = () => parseFloat(fastRampBiasInput.value) || 1.0;
+  const getEarlySwapMs = () => parseFloat(earlySwapMsInput.value) || 80;
 
   // ---- log ring buffer ----
   const LOG_RING_SIZE = 5000;
@@ -488,6 +499,12 @@
       video: idle,
       setSpeed(rate) { targetRate = rate; },
       getCurrentRate() { return idle.playbackRate; },
+      // early swap: fire the exact same onended path early, so main()'s
+      // loop picks it up identically -- just without waiting for the
+      // segment to actually end.
+      endEarly() {
+        if (idle.onended) idle.onended();
+      },
       // Buffer segment `number` into the slot that will be free for the
       // NEXT swap. Right now `idle` (this handle's own video) is about to
       // become active; `active` (today's active) is what's about to be
@@ -597,6 +614,16 @@
     document.getElementById("statReady").textContent = ready ? `yes (segment ${next})` : `no (waiting on ${next})`;
     document.getElementById("statDesired").textContent = desiredRate.toFixed(3) + "x";
     document.getElementById("statSmoothed").textContent = smoothedTarget.toFixed(3) + "x";
+
+    // early swap: if next segment is already buffered, don't wait for
+    // natural 'ended' -- hand off `earlySwapMs` before this segment would
+    // finish, to avoid the last-moment stutter.
+    const earlySwapMs = getEarlySwapMs();
+    const remainingMs = (getSegmentDuration() - currentVideoHandle.video.currentTime) * 1000;
+    if (bufferedNext && remainingMs <= earlySwapMs && remainingMs > -500) {
+      log('early swap: buffered segment', bufferedNext.number, 'ready,', remainingMs.toFixed(0), 'ms remaining');
+      currentVideoHandle.endEarly();
+    }
   }
 
   async function startSetintervalLoopSlowdown(currentVideoHandle) {
