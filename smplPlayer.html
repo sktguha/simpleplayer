@@ -1,7 +1,11 @@
 <html>
 <span style="background-color: lightgray;">http://100.76.9.53:7500 tailscale etc, no trailing slash</span>
-<video id="vd0" style="width:100%"></video>
-<video id="vd1" style="width:100%;display:none"></video>
+<div id="videoContainer" style="position:relative;width:100%;aspect-ratio:16/9;overflow:hidden;background:black;">
+  <video id="vd0"
+    style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:1;display:block;"></video>
+  <video id="vd1"
+    style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:0;display:block;"></video>
+</div>
 <label><input type="checkbox" id="dg">debug level log</label>
 <input type="text" id="url" value="http://100.76.9.53:7500" onchange="localStorage.setItem('url', this.value)"
   style="width:100%" /><button onclick="main()" style="zoom:3;">start</button>
@@ -390,10 +394,13 @@
     // browsers, so we also re-apply it in doSwap right before play().)
     idle.playbackRate = carryRate;
 
+    // If crossfade is enabled, start the incoming video invisible
     if (crossfadeMs > 0) {
       idle.style.transition = `opacity ${crossfadeMs}ms linear`;
-      idle.style.opacity = 0;
-      idle.style.display = "";
+      idle.style.opacity = "0";
+    } else {
+      idle.style.transition = "";
+      idle.style.opacity = "1";           // visible immediately after swap
     }
 
     let swapped = false;
@@ -407,22 +414,25 @@
       idle.play();
 
       if (crossfadeMs > 0) {
-        // fade idle in, active out, over crossfadeMs, then hide active
+        // crossfade: fade idle in, active out
         active.style.transition = `opacity ${crossfadeMs}ms linear`;
-        idle.style.display = "";
-        requestAnimationFrame(() => {
-          idle.style.opacity = 1;
-          active.style.opacity = 0;
-        });
+        idle.style.opacity = "1";
+        active.style.opacity = "0";
+
+        // after the fade, clean up the now-invisible active video
         setTimeout(() => {
-          active.style.display = "none";
           active.pause();
-          active.style.opacity = 1; // reset for its next use
+          // reset active's opacity for its next use as idle
+          active.style.opacity = "1";
+          active.style.transition = "";
         }, crossfadeMs);
       } else {
-        idle.style.display = "";
-        active.style.display = "none";
+        // hard cut: make idle fully visible, hide active instantly
+        idle.style.opacity = "1";
+        active.style.opacity = "0";
         active.pause();
+        // reset for next time
+        active.style.opacity = "1";
       }
 
       activeIdx = idleIdx;
@@ -700,7 +710,9 @@
       const skipped =
         nextValidNumber > currentVideoHandle.currtlyPlayingVideoNumber + 1;
 
-      if (skipped) {
+      if (skipped && carryRate > 1) {
+        // only reset carryRate to 1 if we skipped segments and were running faster than 1x, because otherwise we could be skipping segments at a rate that is too fast for the server to keep up with, leading to more skips and a feedback loop. 
+        // If we are already at 1x or slower, we can keep that rate to avoid further skipping.
         carryRate = 1;
         smoothedTarget = 1;
       }
