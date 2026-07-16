@@ -1,18 +1,19 @@
 <html>
+<span style="background-color: lightgray;">http://100.76.9.53:7500 tailscale etc, no trailing slash</span>
 <video id="vd"></video>
-<input type="text" id="url" value="http://localhost:7500" onchange="localStorage.setItem('url', this.value)"
+<input type="text" id="url" value="http://100.76.9.53:7500" onchange="localStorage.setItem('url', this.value)"
   style="width:100%" /><button onclick="main()" style="zoom:3;">start</button>
 <textarea id='ln'>function(){}</textarea>
 <textarea style="width: 100%; height: 100px;" id='log' placeholder="Logs will come here"></textarea>
 <button onclick="document.getElementById('log').style.display = 'block';">show log</button>
 <button onclick="document.getElementById('log').style.display = 'none';">hide log</button>
 <script>
+  const urlInput = document.getElementById("url");
+  urlInput.value = localStorage.getItem("url") || urlInput.value;
 
   // 100.76.9.53
   let BASE_URL = document.getElementById("url").value;
   let MAX_RATE = 1.5, MIN_RATE = 0.5;
-  const urlInput = document.getElementById("url");
-  urlInput.value = localStorage.getItem("url") || urlInput.value;
   function log(...args) {
     console.log(...args);
     const log = document.getElementById('log');
