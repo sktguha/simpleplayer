@@ -1,39 +1,68 @@
 <html>
 <video id="vd"></video>
 <textarea id='ln'>function(){}</textarea>
+<textarea style="width: 100%; height: 100px;" id='log' placeholder="Logs will come here"></textarea>
+<button onclick="document.getElementById('log').style.display = 'block';">show log</button>
+<button onclick="document.getElementById('log').style.display = 'none';">hide log</button>
 <script>
-async function getStatusInfoFn(fn=function(){}){
- return getApi(fn);
-}
-async function getLatestNumber(){
-//api call and get mm 
+  let BASE_URL = 'http://localhost:7500';
+  function log(...args) {
+    console.log(...args);
+    const log = document.getElementById('log');
+    log.value = log.value + '\n' + args.join(' -- ');
+  }
 
-}
+  async function getApi(fn = function () { }) {
+    const response = await fetch(`${BASE_URL}/state`);
+    const data = await response.json();
+    fn(data);
+    return data;
+  }
 
-function startSetintervalLoopSlowdown(currentVideo){
-  const latestNumber = await getLatestNumber();
-  
-  
-}
+  async function getApi(fn = function () { }) {
+    const response = await fetch('https://api.example.com/status' / +fn.toString());
+    const data = await response.json();
+    fn(data);
+    return data;
+  }
 
-////////////////////
-////////////////////
-// MAIN LOOP   /////
-///////////////////
-///////////////////
+  async function getStatusInfoFn(fn = function () { }) {
+    return getApi(fn);
+  }
+  async function getLatestNumber() {
+    //api call and get mm 
 
-while(1){
-number = getLatestNumber ();
+  }
 
-if ( number <= curr video.currVideoNumber)
-{
-// next part didn't come at end also. what to do 
-continue;
-}
-currentVideo = playVideo(number)
-startSetintervalLoopSlowdown(currentVideo, getLatestNumber) ; // fn reference . also listen currentvideo.promise handle and clear itself internally
-await currentVideo.promiseHandle
-}
+  async function startSetintervalLoopSlowdown(currentVideo) {
+    const latestNumber = await getLatestNumber();
 
+
+  }
+
+  ////////////////////
+  ////////////////////
+  // MAIN LOOP   /////
+  ///////////////////
+  ///////////////////
+
+  let currentVideoHandle = { currVideoNumber: -100000 }
+  async function main() {
+    while (1) {
+      number = getLatestNumber();
+
+      if (number <= currVideoHandle.currVideoNumber) {
+        // next part didn't come at end also. what to do 
+        continue;
+      }
+      currentVideo = playVideo(number)
+      startSetintervalLoopSlowdown(currentVideo, getLatestNumber); // fn reference . also listen currentvideo.promise handle and clear itself internally
+      await currentVideo.promiseHandle
+    }
+  }
+  // main();
+  log('test log')
+  log('test log 2')
 </script>
+
 </html>
