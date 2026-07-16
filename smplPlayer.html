@@ -109,7 +109,7 @@
     // can be timing issue if next video its changed to ready before the interval is cleared, 
     // but its not a big deal as small local, fix if needed is inside the 
     // slowOrSpeedUpVideo function to check if the currentVideoHandle 
-    // is still the same as the one passed in, after that getApi line
+    // is still the same as the one passed in, after that getApi line.
     return currentVideoHandle.promiseHandle.finally(() => clearInterval(id));
   }
 
