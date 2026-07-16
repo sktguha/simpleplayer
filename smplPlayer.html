@@ -339,15 +339,10 @@
 
     const crossfadeMs = getCrossfadeMs();
 
-    // ---- use preloaded Blob URL if available (super fast start) ----
-    const buffered = active._bufferedNext;
-    if (buffered && buffered.number === number) {
-      idle.src = buffered.blobUrl;
-      delete active._bufferedNext; // consume it once
-    } else {
-      idle.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
-    }
-
+    idle.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
+    // start at the rate we left off at, not 1x — avoids the hard reset/stutter
+    // at every swap. (.src assignment can itself reset playbackRate on some
+    // browsers, so we also re-apply it in doSwap right before play().)
     idle.playbackRate = carryRate;
 
     if (crossfadeMs > 0) {
@@ -363,10 +358,11 @@
     const doSwap = () => {
       if (swapped) return;
       swapped = true;
-      idle.playbackRate = carryRate;
+      idle.playbackRate = carryRate; // re-assert in case .src reset it
       idle.play();
 
       if (crossfadeMs > 0) {
+        // fade idle in, active out, over crossfadeMs, then hide active
         active.style.transition = `opacity ${crossfadeMs}ms linear`;
         idle.style.display = "";
         requestAnimationFrame(() => {
@@ -376,7 +372,7 @@
         setTimeout(() => {
           active.style.display = "none";
           active.pause();
-          active.style.opacity = 1;
+          active.style.opacity = 1; // reset for its next use
         }, crossfadeMs);
       } else {
         idle.style.display = "";
@@ -390,17 +386,6 @@
 
     idle.oncanplay = doSwap;
     setTimeout(doSwap, Number(swapTimeoutInput.value) || 1000);
-
-    // ---- early swap when next segment is preloaded and 95% played ----
-    function earlySwapCheck() {
-      if (!idle._bufferedNext) return;
-      if (idle.currentTime >= getSegmentDuration() * 0.95) {
-        idle.removeEventListener('timeupdate', earlySwapCheck);
-        // simulate natural end → triggers onended → main loop proceeds
-        if (idle.onended) idle.onended();
-      }
-    }
-    idle.addEventListener('timeupdate', earlySwapCheck);
 
     function startRamp() {
       rampTimerId = setInterval(() => {
@@ -420,6 +405,8 @@
     const promiseHandle = new Promise(resolve => {
       idle.onended = () => {
         clearInterval(rampTimerId);
+        // hand off the rate this segment actually ended at, so the next
+        // playVideo() call can carry it forward instead of resetting to 1x
         resolve(idle.playbackRate);
       };
     });
@@ -428,128 +415,16 @@
       currtlyPlayingVideoNumber: number,
       promiseHandle,
       video: idle,
+      // now just sets a target; playVideo's own ramp loop eases toward it
       setSpeed(rate) {
         targetRate = rate;
       },
+      // lets external code read "what rate is this segment on right now"
+      // without waiting for onended (used defensively, not required for the fix)
       getCurrentRate() {
         return idle.playbackRate;
-      },
-      // ---- setBufferedNext implementation ----
-      async setBufferedNext(nextNumber) {
-        // ignore repeated calls for the same number
-        if (idle._bufferedNext && idle._bufferedNext.number === nextNumber) return;
-
-        try {
-          const resp = await fetch(`${BASE_URL}/segment/segment_${String(nextNumber).padStart(6, "0")}.mp4`);
-          const blob = await resp.blob();
-          const blobUrl = URL.createObjectURL(blob);
-          idle._bufferedNext = { number: nextNumber, blobUrl };
-
-          // If we're already past 95%, trigger early swap immediately
-          if (idle.currentTime >= getSegmentDuration() * 0.95) {
-            earlySwapCheck();
-          }
-        } catch (e) {
-          log('setBufferedNext failed', nextNumber, e);
-        }
       }
     };
-  }
-  log(`Playing video segment ${number}`, currentVideoHandle, 'carryRate=', carryRate);
-  logI(`Playing segment ${number}`);
-
-  const idleIdx = 1 - activeIdx;
-  const idle = vids[idleIdx];
-  const active = vids[activeIdx];
-
-  const crossfadeMs = getCrossfadeMs();
-
-  idle.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
-  // start at the rate we left off at, not 1x — avoids the hard reset/stutter
-  // at every swap. (.src assignment can itself reset playbackRate on some
-  // browsers, so we also re-apply it in doSwap right before play().)
-  idle.playbackRate = carryRate;
-
-  if (crossfadeMs > 0) {
-    idle.style.transition = `opacity ${crossfadeMs}ms linear`;
-    idle.style.opacity = 0;
-    idle.style.display = "";
-  }
-
-  let swapped = false;
-  let targetRate = carryRate;
-  let rampTimerId = null;
-
-  const doSwap = () => {
-    if (swapped) return;
-    swapped = true;
-    idle.playbackRate = carryRate; // re-assert in case .src reset it
-    idle.play();
-
-    if (crossfadeMs > 0) {
-      // fade idle in, active out, over crossfadeMs, then hide active
-      active.style.transition = `opacity ${crossfadeMs}ms linear`;
-      idle.style.display = "";
-      requestAnimationFrame(() => {
-        idle.style.opacity = 1;
-        active.style.opacity = 0;
-      });
-      setTimeout(() => {
-        active.style.display = "none";
-        active.pause();
-        active.style.opacity = 1; // reset for its next use
-      }, crossfadeMs);
-    } else {
-      idle.style.display = "";
-      active.style.display = "none";
-      active.pause();
-    }
-
-    activeIdx = idleIdx;
-    startRamp();
-  };
-
-  idle.oncanplay = doSwap;
-  setTimeout(doSwap, Number(swapTimeoutInput.value) || 1000);
-
-  function startRamp() {
-    rampTimerId = setInterval(() => {
-      const step = getRampStep();
-      const rate = idle.playbackRate;
-      if (Math.abs(rate - targetRate) < step) {
-        idle.playbackRate = targetRate;
-        return;
-      }
-      idle.playbackRate = rate < targetRate
-        ? rate + step
-        : rate - step;
-      updateActualRateStat(idle.playbackRate);
-    }, getRampInterval());
-  }
-
-  const promiseHandle = new Promise(resolve => {
-    idle.onended = () => {
-      clearInterval(rampTimerId);
-      // hand off the rate this segment actually ended at, so the next
-      // playVideo() call can carry it forward instead of resetting to 1x
-      resolve(idle.playbackRate);
-    };
-  });
-
-  return {
-    currtlyPlayingVideoNumber: number,
-    promiseHandle,
-    video: idle,
-    // now just sets a target; playVideo's own ramp loop eases toward it
-    setSpeed(rate) {
-      targetRate = rate;
-    },
-    // lets external code read "what rate is this segment on right now"
-    // without waiting for onended (used defensively, not required for the fix)
-    getCurrentRate() {
-      return idle.playbackRate;
-    }
-  };
   }
 
   ////////////////////
