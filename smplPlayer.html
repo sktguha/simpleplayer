@@ -46,6 +46,20 @@
     return getApi(fn);
   }
 
+  function findStatusById(segments, id) {
+    return segments.find(s => s.id === id)?.status;
+  }
+
+  async function getNextValidNumber(currentNumber) {
+    const { segments } = await getApi();
+
+    let next = currentNumber + 1;
+
+    while (findStatusById(segments, next) === "dead") next++;
+
+    return findStatusById(segments, next) === "ready" ? next : null;
+  }
+
   async function getLatestNumber() {
     log('getLatestNumber called, curr is : ', currentVideoHandle.currtlyPlayingVideoNumber);
     const data = await getApi();
@@ -90,10 +104,9 @@
     const { segments } = await getApi();
 
     let next = currentVideoHandle.currtlyPlayingVideoNumber + 1;
-    const findStatus = (idToFind) => segments.find(seg => seg.id === idToFind)?.status;
-    while (findStatus(next) === "dead") next++;
+    while (findStatusById(segments, next) === "dead") next++;
 
-    const ready = segments.find(s => s.id === next)?.status === "ready";
+    const ready = findStatusById(segments, next) === "ready";
     if (ready) {
       log(`Next segment ${next} is ready, speeding up playback`);
       currentVideoHandle.setSpeed(MAX_RATE);
