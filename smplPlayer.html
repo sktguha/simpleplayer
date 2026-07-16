@@ -8,6 +8,7 @@
 <button onclick="document.getElementById('log').style.display = 'block';">show log</button>
 <button onclick="document.getElementById('log').style.display = 'none';">hide log</button>
 <script>
+  let currentVideoHandle = null;
   const urlInput = document.getElementById("url");
   urlInput.value = localStorage.getItem("url") || urlInput.value;
 
@@ -62,7 +63,7 @@
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   function playVideo(number) {
-    log(`Playing video segment ${number}`, currVideoHandle);
+    log(`Playing video segment ${number}`, currentVideoHandle);
     const video = document.getElementById("vd");
 
     video.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
@@ -87,9 +88,7 @@
   ////////////////////
   // MAIN LOOP
   ////////////////////
-
-  let currentVideoHandle = { currVideoNumber: -Infinity };
-
+  currentVideoHandle = { currVideoNumber: -Infinity };
   async function main() {
     while (1) {
       const number = await getLatestNumber();
