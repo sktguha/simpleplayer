@@ -37,6 +37,8 @@
 
   }
 
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
   function playVideo(number) {
     const video = document.getElementById("vd");
 
@@ -72,6 +74,7 @@
 
       if (number <= currVideoHandle.currVideoNumber) {
         // next part didn't come at end also. what to do 
+        await sleep(100); // wait for next part to come.
         continue;
       }
       currentVideo = playVideo(number)
