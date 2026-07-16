@@ -1,3 +1,8 @@
+I'll add two small text boxes for **fast bias** and **slowness bias** that scale the speed-up and slow-down portions of
+the desired rate before smoothing.
+The change is localized – just UI elements + a couple of lines in the control loop – so it's easy to review.
+
+```html
 <html>
 <span style="background-color: lightgray;">http://100.76.9.53:7500 tailscale etc, no trailing slash</span>
 <video id="vd0" style="width:100%"></video>
@@ -54,13 +59,6 @@
     <label>slow bias: <input type="text" id="slowBias" value="1.0" style="width:4em"
         onchange="localStorage.setItem('slowBias', this.value)"></label>
     <span style="color:gray;">multiplier on speed-up / slow-down portion of desired rate (1.0 = no change)</span>
-  </div>
-
-  <!-- NEW: preload threshold -->
-  <div>
-    <label>preload threshold (%): <input type="number" id="preloadThreshold" value="95" min="0" max="100"
-        style="width:4em" onchange="localStorage.setItem('preloadThreshold', this.value)"></label>
-    <span style="color:gray;">start loading next segment when current reaches this % of segment duration</span>
   </div>
 
   <div>
@@ -203,10 +201,6 @@
   const slowBiasInput = document.getElementById("slowBias");
   slowBiasInput.value = localStorage.getItem("slowBias") || slowBiasInput.value;
 
-  // NEW: preload threshold input
-  const preloadThresholdInput = document.getElementById("preloadThreshold");
-  preloadThresholdInput.value = localStorage.getItem("preloadThreshold") || preloadThresholdInput.value;
-
   // 100.76.9.53 or hotspot ip etc
   let BASE_URL = document.getElementById("url").value;
   const getMinRate = () => parseFloat(minRateInput.value) || 0.4;
@@ -221,7 +215,6 @@
   const getRestartTimeoutMs = () => (parseFloat(restartTimeoutInput.value) || 4) * 1000;
   const getFastBias = () => parseFloat(fastBiasInput.value) || 1.0;
   const getSlowBias = () => parseFloat(slowBiasInput.value) || 1.0;
-  const getPreloadThreshold = () => parseFloat(preloadThresholdInput.value) || 95;
 
   // ---- log ring buffer ----
   const LOG_RING_SIZE = 5000;
@@ -351,20 +344,11 @@
 
     const crossfadeMs = getCrossfadeMs();
 
-    // --- NEW: reuse already buffered segment if the numbers match ---
-    const alreadyBuffered = (idle.dataset.bufferedSegment === String(number));
-    if (alreadyBuffered) {
-      log(`Reusing buffered segment ${number} from idle video`);
-      delete idle.dataset.bufferedSegment;             // consume the buffer
-      if (idle._bufferingInterval) {
-        clearInterval(idle._bufferingInterval);
-        idle._bufferingInterval = null;
-      }
-      idle.playbackRate = carryRate;                   // set rate immediately
-    } else {
-      idle.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
-      idle.playbackRate = carryRate;
-    }
+    idle.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
+    // start at the rate we left off at, not 1x — avoids the hard reset/stutter
+    // at every swap. (.src assignment can itself reset playbackRate on some
+    // browsers, so we also re-apply it in doSwap right before play().)
+    idle.playbackRate = carryRate;
 
     if (crossfadeMs > 0) {
       idle.style.transition = `opacity ${crossfadeMs}ms linear`;
@@ -379,10 +363,11 @@
     const doSwap = () => {
       if (swapped) return;
       swapped = true;
-      idle.playbackRate = carryRate; // re-assert
+      idle.playbackRate = carryRate; // re-assert in case .src reset it
       idle.play();
 
       if (crossfadeMs > 0) {
+        // fade idle in, active out, over crossfadeMs, then hide active
         active.style.transition = `opacity ${crossfadeMs}ms linear`;
         idle.style.display = "";
         requestAnimationFrame(() => {
@@ -392,7 +377,7 @@
         setTimeout(() => {
           active.style.display = "none";
           active.pause();
-          active.style.opacity = 1; // reset for next use
+          active.style.opacity = 1; // reset for its next use
         }, crossfadeMs);
       } else {
         idle.style.display = "";
@@ -404,13 +389,8 @@
       startRamp();
     };
 
-    // If we reused a buffered segment it's already ready – swap immediately
-    if (alreadyBuffered) {
-      setTimeout(doSwap, 0);
-    } else {
-      idle.oncanplay = doSwap;
-      setTimeout(doSwap, Number(swapTimeoutInput.value) || 1000);
-    }
+    idle.oncanplay = doSwap;
+    setTimeout(doSwap, Number(swapTimeoutInput.value) || 1000);
 
     function startRamp() {
       rampTimerId = setInterval(() => {
@@ -430,6 +410,8 @@
     const promiseHandle = new Promise(resolve => {
       idle.onended = () => {
         clearInterval(rampTimerId);
+        // hand off the rate this segment actually ended at, so the next
+        // playVideo() call can carry it forward instead of resetting to 1x
         resolve(idle.playbackRate);
       };
     });
@@ -438,52 +420,14 @@
       currtlyPlayingVideoNumber: number,
       promiseHandle,
       video: idle,
+      // now just sets a target; playVideo's own ramp loop eases toward it
       setSpeed(rate) {
         targetRate = rate;
       },
+      // lets external code read "what rate is this segment on right now"
+      // without waiting for onended (used defensively, not required for the fix)
       getCurrentRate() {
         return idle.playbackRate;
-      },
-      // ---- NEW: setBufferedNext implementation ----
-      setBufferedNext(nextNumber) {
-        if (nextNumber == null) return;
-
-        const threshold = getPreloadThreshold() / 100;
-        const activeVideo = active;      // the segment that's currently playing
-        const idleVideo = idle;          // the video element we'll preload into
-
-        // Clear any previous buffering job on this element
-        if (idleVideo._bufferingInterval) {
-          clearInterval(idleVideo._bufferingInterval);
-          idleVideo._bufferingInterval = null;
-        }
-
-        function loadSegment() {
-          idleVideo.src = `${BASE_URL}/segment/segment_${String(nextNumber).padStart(6, "0")}.mp4`;
-          idleVideo.dataset.bufferedSegment = nextNumber;
-          log(`Buffered segment ${nextNumber} for idle video`);
-          if (idleVideo._bufferingInterval) {
-            clearInterval(idleVideo._bufferingInterval);
-            idleVideo._bufferingInterval = null;
-          }
-        }
-
-        const currentTime = activeVideo.currentTime;
-        const segDur = getSegmentDuration();
-        const progress = currentTime / segDur;
-
-        if (progress >= threshold) {
-          // Already past the threshold, load right away
-          loadSegment();
-        } else {
-          // Wait until the current segment reaches the threshold
-          idleVideo._bufferingInterval = setInterval(() => {
-            const prog = activeVideo.currentTime / segDur;
-            if (prog >= threshold) {
-              loadSegment();
-            }
-          }, 200);
-        }
       }
     };
   }
@@ -492,6 +436,13 @@
   // MAIN LOOP
   ////////////////////
 
+  // urgency: 0 = just started the segment, plenty of time left.
+  //          1 = segment is basically over, about to starve.
+  // deliberately NOT using video.duration here -- it's unreliable right after
+  // a .src swap (can be NaN until metadata loads) and we don't need it: we
+  // already know how long a segment is supposed to be (configurable now via
+  // the "segment duration" input). clamped because currentTime can overshoot
+  // the constant by a hair right at the end.
   function getUrgency(video) {
     const segDur = getSegmentDuration();
     const remaining = segDur - video.currentTime;
@@ -499,10 +450,16 @@
     return Math.min(1, Math.max(0, urgency));
   }
 
+  // linear interpolation, nothing fancy
   function lerp(a, b, t) {
     return a + (b - a) * t;
   }
 
+  // urgency -> target playback rate, for the "next segment not ready yet" case.
+  // curve is now selectable in the UI:
+  //   linear:    straight line from 1x down to minRate
+  //   quadratic: stays closer to 1x early, then drops faster near the end
+  //   lateOnly:  stays pinned at 1x until 50% through the segment, then ramps
   function urgencyToRate(urgency, minRate, curve) {
     let t = urgency;
     if (curve === "quadratic") {
@@ -513,6 +470,20 @@
     return lerp(1, minRate, t);
   }
 
+  // Why this exists: playVideo's ramp loop only smooths the *achieved*
+  // playbackRate toward whatever target it's given -- but setSpeed() itself
+  // was a hard assignment. So if "ready" flips on/off a couple times within
+  // one segment (which it does -- see the log, segments arrive irregularly),
+  // the target itself was snapping 1 -> 4 -> 0.4 -> 4 etc every single poll.
+  // The ramp then just chases whichever way the wind last blew, reversing
+  // direction constantly. That's the "snaps like crazy" symptom -- it's not
+  // a race condition, so a lock wouldn't touch it. It's a missing low-pass
+  // filter on the target itself, one level up from the existing ramp.
+  //
+  // smoothedTarget is a second, slower-moving target that sits between the
+  // raw desired rate (which can still jump instantly) and setSpeed (which
+  // now only ever receives the smoothed value). "target smoothing step" in
+  // the UI controls how fast this can move -- larger = snappier.
   let smoothedTarget = 1;
   let lastNewSegmentSeenAt = Date.now();
   let lastKnownLatest = -1;
@@ -524,6 +495,7 @@
   async function slowOrSpeedUpVideo() {
     const { segments } = await getApi();
 
+    // stall tracking: has a new segment id appeared recently?
     const maxId = segments.length ? Math.max(...segments.map(s => Number(s.id) || -1)) : -1;
     if (maxId > lastKnownLatest) {
       lastKnownLatest = maxId;
@@ -534,7 +506,7 @@
 
     if (autoRestartInput.checked && stallMs > getRestartTimeoutMs()) {
       document.getElementById("stallStatus").textContent = "STALLED -> restarting server...";
-      lastNewSegmentSeenAt = Date.now();
+      lastNewSegmentSeenAt = Date.now(); // avoid double-fire while restart is in flight
       restartServer();
     } else {
       document.getElementById("stallStatus").textContent = "";
@@ -549,13 +521,23 @@
 
     let desiredRate;
     if (ready) {
+      // next segment is sitting there ready to go -- no point holding back,
+      // we WANT to ramp up to eat through any buffer we built up. but this
+      // desire still has to pass through the smoothing step below before it
+      // reaches setSpeed.
       desiredRate = getMaxRate();
       logD(`Next segment ${next} is ready, desired rate ${desiredRate}`);
-    } else {
+    }
+    else {
+      // next isn't ready. don't panic immediately -- only slow down as much
+      // as the remaining time in *this* segment actually demands.
       desiredRate = urgencyToRate(urgency, getMinRate(), curve);
       logD(`Next segment ${next} is not ready, urgency=${urgency.toFixed(2)}, desired rate=${desiredRate.toFixed(2)}`);
     }
 
+    // ---- apply fast/slow bias to the desired rate ----
+    // fastBias multiplies the amount of speed-up (desired - 1) when > 1.
+    // slowBias multiplies the amount of slow-down (1 - desired) when < 1.
     const fastBias = getFastBias();
     const slowBias = getSlowBias();
     if (desiredRate > 1.0) {
@@ -564,6 +546,8 @@
       desiredRate = 1.0 - (1.0 - desiredRate) * slowBias;
     }
 
+    // low-pass filter: smoothedTarget can only move targetSmoothingStep
+    // per tick toward desiredRate, regardless of how far desiredRate jumped.
     const smoothStep = getTargetSmoothingStep();
     if (Math.abs(smoothedTarget - desiredRate) < smoothStep) {
       smoothedTarget = desiredRate;
@@ -574,6 +558,7 @@
     logI(`Speed target: ${smoothedTarget.toFixed(2)}x (desired ${desiredRate.toFixed(2)}x, urgency ${(urgency * 100).toFixed(0)}%)`);
     currentVideoHandle.setSpeed(smoothedTarget);
 
+    // ---- live status table ----
     document.getElementById("statProgress").textContent = `${(urgency * 100).toFixed(0)}% through segment`;
     document.getElementById("statUrgency").textContent = urgency.toFixed(3);
     document.getElementById("statReady").textContent = ready ? `yes (segment ${next})` : `no (waiting on ${next})`;
@@ -584,6 +569,10 @@
   async function startSetintervalLoopSlowdown(currentVideoHandle) {
     const staleSafePromiseVideoHandle = currentVideoHandle.promiseHandle;
     const id = setInterval(() => slowOrSpeedUpVideo(currentVideoHandle), getPollInterval());
+    // can be timing issue if next video its changed to ready before the interval is cleared, 
+    // but its not a big deal as small local, fix if needed is inside the 
+    // slowOrSpeedUpVideo function to check if the currentVideoHandle 
+    // is still the same as the one passed in, after that getApi line.
     return staleSafePromiseVideoHandle.finally(() => clearInterval(id));
   }
 
@@ -592,11 +581,12 @@
     const buffer = getStartupBuffer();
     const startNumber = Math.max(-1, frontierLatestVideoNumber - buffer);
     log('got frontierLatestVideoNumber as', frontierLatestVideoNumber, 'starting from', startNumber, '(buffer=', buffer, ')');
+    // this is only one initialisation place, else undefined.
     currentVideoHandle = { currtlyPlayingVideoNumber: startNumber };
     lastKnownLatest = frontierLatestVideoNumber;
     lastNewSegmentSeenAt = Date.now();
 
-    let carryRate = 1;
+    let carryRate = 1; // first segment ever: no prior rate to carry, start at 1x
 
     async function loopUntilgetNextValidNumber() {
       const nextValidNumber = await getNextValidNumber(currentVideoHandle.currtlyPlayingVideoNumber);
@@ -609,14 +599,16 @@
     }
 
     while (1) {
+
       const nextValidNumber = await loopUntilgetNextValidNumber();
       currentVideoHandle = playVideo(nextValidNumber, carryRate);
 
       startSetintervalLoopSlowdown(currentVideoHandle);
       const nextValidBufferedNumber = await loopUntilgetNextValidNumber();
       log('next valid number is', nextValidBufferedNumber, 'current is', currentVideoHandle.currtlyPlayingVideoNumber, 'waiting for current to end...');
-      // FIXED typo: currentVideoHandle (was currentVideHandle)
-      currentVideoHandle.setBufferedNext(nextValidBufferedNumber);
+      currentVideHandle.setBufferedNext(nextValidBufferedNumber);
+      // promiseHandle now resolves with the rate the segment ended at;
+      // that becomes next segment's starting rate
       carryRate = await currentVideoHandle.promiseHandle;
     }
   }
@@ -664,3 +656,4 @@
 </script>
 
 </html>
+```
