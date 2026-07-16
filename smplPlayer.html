@@ -98,7 +98,7 @@
   ////////////////////
   // MAIN LOOP
   ////////////////////
-  currentVideoHandle = { currtlyPlayingVideoNumber: -Infinity };
+  currentVideoHandle = { currtlyPlayingVideoNumber: -1 };
 
   async function slowOrSpeedUpVideo() {
     const { segments } = await getApi();
@@ -131,7 +131,8 @@
     while (1) {
       const nextValidNumber = await getNextValidNumber(currentVideoHandle.currtlyPlayingVideoNumber);
 
-      if (nextValidNumber <= currentVideoHandle.currtlyPlayingVideoNumber) {
+      if (nextValidNumber === null || nextValidNumber <= currentVideoHandle.currtlyPlayingVideoNumber) {
+        log('invalid nextValidNumber, waiting for 100ms and retrying...', nextValidNumber, currentVideoHandle.currtlyPlayingVideoNumber);
         await sleep(100);
         continue;
       }
