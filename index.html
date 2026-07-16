@@ -35,8 +35,7 @@
   <div>
     <label>crossfade on swap (ms): <input type="number" id="crossfadeMs" value="0" min="0" style="width:6em"
         onchange="localStorage.setItem('crossfadeMs', this.value)"></label>
-    <span style="color:gray;">0 = hard cut (current behavior). >0 = fade opacity between segments to hide the
-      flash.</span>
+    <span style="color:gray;">0 = hard cut (current behavior). >0 = fade opacity between segments to hide the flash.</span>
   </div>
 
   <div>
@@ -48,10 +47,9 @@
   </div>
 
   <div>
-    <label>target smoothing step (per 50ms tick): <input type="number" id="targetSmoothingStep" value="0.15" step="0.01"
-        style="width:5em" onchange="localStorage.setItem('targetSmoothingStep', this.value)"></label>
-    <span style="color:gray;">low-pass filter on the desired-rate target itself. Lower = smoother/slower to react,
-      higher = snappier/more jumpy. This is the fix for "snaps like crazy".</span>
+    <label>target smoothing step (per 50ms tick): <input type="number" id="targetSmoothingStep" value="0.15"
+        step="0.01" style="width:5em" onchange="localStorage.setItem('targetSmoothingStep', this.value)"></label>
+    <span style="color:gray;">low-pass filter on the desired-rate target itself. Lower = smoother/slower to react, higher = snappier/more jumpy. This is the fix for "snaps like crazy".</span>
   </div>
 
   <div>
@@ -71,8 +69,7 @@
   <div>
     <label>segment duration (s): <input type="number" id="segmentDuration" value="1" step="0.1" style="width:5em"
         onchange="localStorage.setItem('segmentDuration', this.value)"></label>
-    <span style="color:gray;">expected length of one segment. Used to compute urgency (% of segment played so far). Set
-      this to match your server's actual segment length.</span>
+    <span style="color:gray;">expected length of one segment. Used to compute urgency (% of segment played so far). Set this to match your server's actual segment length.</span>
   </div>
 
   <div>
@@ -89,43 +86,20 @@
   <legend><b>Live status</b></legend>
   <div id="logI" style="white-space:pre;font-family:monospace;font-size:1.1em;"></div>
   <table style="font-family:monospace;border-collapse:collapse;" border="1" cellpadding="4">
-    <tr>
-      <td>segment progress</td>
-      <td id="statProgress">-</td>
-    </tr>
-    <tr>
-      <td>urgency</td>
-      <td id="statUrgency">-</td>
-    </tr>
-    <tr>
-      <td>next segment ready?</td>
-      <td id="statReady">-</td>
-    </tr>
-    <tr>
-      <td>desired rate (raw, pre-smoothing)</td>
-      <td id="statDesired">-</td>
-    </tr>
-    <tr>
-      <td>smoothed target rate</td>
-      <td id="statSmoothed">-</td>
-    </tr>
-    <tr>
-      <td>actual playbackRate (ramped)</td>
-      <td id="statActual">-</td>
-    </tr>
-    <tr>
-      <td>time since last new segment appeared</td>
-      <td id="statStall">-</td>
-    </tr>
+    <tr><td>segment progress</td><td id="statProgress">-</td></tr>
+    <tr><td>urgency</td><td id="statUrgency">-</td></tr>
+    <tr><td>next segment ready?</td><td id="statReady">-</td></tr>
+    <tr><td>desired rate (raw, pre-smoothing)</td><td id="statDesired">-</td></tr>
+    <tr><td>smoothed target rate</td><td id="statSmoothed">-</td></tr>
+    <tr><td>actual playbackRate (ramped)</td><td id="statActual">-</td></tr>
+    <tr><td>time since last new segment appeared</td><td id="statStall">-</td></tr>
   </table>
 </fieldset>
 
 <fieldset>
   <legend><b>Server eval console</b></legend>
-  <div style="color:gray;">Executes arbitrary JS on the server and shows the result. Security note: this is a raw eval
-    endpoint, only point it at trusted servers on your own network.</div>
-  <textarea id="evalInput" style="width:100%;height:4em;font-family:monospace;"
-    placeholder="e.g. latest  or  Array.from(downloaded)  or  segmentMs"></textarea><br>
+  <div style="color:gray;">Executes arbitrary JS on the server and shows the result. Security note: this is a raw eval endpoint, only point it at trusted servers on your own network.</div>
+  <textarea id="evalInput" style="width:100%;height:4em;font-family:monospace;" placeholder="e.g. latest  or  Array.from(downloaded)  or  segmentMs"></textarea><br>
   <button onclick="runEval()">run eval</button>
   <pre id="evalOutput" style="background:#eee;padding:4px;white-space:pre-wrap;"></pre>
 </fieldset>
