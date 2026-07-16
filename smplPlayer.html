@@ -1,8 +1,3 @@
-I'll add two small text boxes for **fast bias** and **slowness bias** that scale the speed-up and slow-down portions of
-the desired rate before smoothing.
-The change is localized – just UI elements + a couple of lines in the control loop – so it's easy to review.
-
-```html
 <html>
 <span style="background-color: lightgray;">http://100.76.9.53:7500 tailscale etc, no trailing slash</span>
 <video id="vd0" style="width:100%"></video>
@@ -34,7 +29,7 @@ The change is localized – just UI elements + a couple of lines in the control 
   <div>
     <label>swap timeout (ms): <input type="number" id="swapTimeout" value="1000" style="width:6em"
         onchange="localStorage.setItem('swapTimeout', this.value)"></label>
-    <span style="color:gray;">max time to wait for oncanplay before forcing the swap to the next segment</span>
+    <span style="color:gray;">max time to wait for the next segment to be ready before forcing the swap anyway</span>
   </div>
 
   <div>
@@ -52,20 +47,28 @@ The change is localized – just UI elements + a couple of lines in the control 
     <span style="color:gray;">rate range the controller is allowed to choose between</span>
   </div>
 
-  <!-- new bias inputs -->
   <div>
-    <label>fast bias: <input type="text" id="fastBias" value="1.0" style="width:4em"
-        onchange="localStorage.setItem('fastBias', this.value)"></label>
-    <label>slow bias: <input type="text" id="slowBias" value="1.0" style="width:4em"
-        onchange="localStorage.setItem('slowBias', this.value)"></label>
-    <span style="color:gray;">multiplier on speed-up / slow-down portion of desired rate (1.0 = no change)</span>
+    <label>slow trigger bias: <input type="text" id="slowTriggerBias" value="1.5" style="width:4em"
+        onchange="localStorage.setItem('slowTriggerBias', this.value)"></label>
+    <label>slow ramp bias: <input type="text" id="slowRampBias" value="1.5" style="width:4em"
+        onchange="localStorage.setItem('slowRampBias', this.value)"></label>
+    <span style="color:gray;">trigger: >1 = starts slowing down earlier in the segment. ramp: >1 = reaches the slow
+      target faster once triggered.</span>
+  </div>
+  <div>
+    <label>fast trigger bias: <input type="text" id="fastTriggerBias" value="0.6" style="width:4em"
+        onchange="localStorage.setItem('fastTriggerBias', this.value)"></label>
+    <label>fast ramp bias: <input type="text" id="fastRampBias" value="0.5" style="width:4em"
+        onchange="localStorage.setItem('fastRampBias', this.value)"></label>
+    <span style="color:gray;">trigger: &lt;1 = asks for less speed-up right when "ready" flips true. ramp: &lt;1 =
+      takes longer to actually reach the speed-up target.</span>
   </div>
 
   <div>
     <label>target smoothing step (per 50ms tick): <input type="number" id="targetSmoothingStep" value="0.15" step="0.01"
         style="width:5em" onchange="localStorage.setItem('targetSmoothingStep', this.value)"></label>
     <span style="color:gray;">low-pass filter on the desired-rate target itself. Lower = smoother/slower to react,
-      higher = snappier/more jumpy. This is the fix for "snaps like crazy".</span>
+      higher = snappier/more jumpy.</span>
   </div>
 
   <div>
@@ -85,8 +88,8 @@ The change is localized – just UI elements + a couple of lines in the control 
   <div>
     <label>segment duration (s): <input type="number" id="segmentDuration" value="1" step="0.1" style="width:5em"
         onchange="localStorage.setItem('segmentDuration', this.value)"></label>
-    <span style="color:gray;">expected length of one segment. Used to compute urgency (% of segment played so far). Set
-      this to match your server's actual segment length.</span>
+    <span style="color:gray;">expected length of one segment. Used to compute urgency (% of segment played so far).
+      Set this to match your server's actual segment length.</span>
   </div>
 
   <div>
@@ -195,11 +198,14 @@ The change is localized – just UI elements + a couple of lines in the control 
   const restartTimeoutInput = document.getElementById("restartTimeout");
   restartTimeoutInput.value = localStorage.getItem("restartTimeout") || restartTimeoutInput.value;
 
-  // bias inputs
-  const fastBiasInput = document.getElementById("fastBias");
-  fastBiasInput.value = localStorage.getItem("fastBias") || fastBiasInput.value;
-  const slowBiasInput = document.getElementById("slowBias");
-  slowBiasInput.value = localStorage.getItem("slowBias") || slowBiasInput.value;
+  const slowTriggerBiasInput = document.getElementById("slowTriggerBias");
+  slowTriggerBiasInput.value = localStorage.getItem("slowTriggerBias") || slowTriggerBiasInput.value;
+  const slowRampBiasInput = document.getElementById("slowRampBias");
+  slowRampBiasInput.value = localStorage.getItem("slowRampBias") || slowRampBiasInput.value;
+  const fastTriggerBiasInput = document.getElementById("fastTriggerBias");
+  fastTriggerBiasInput.value = localStorage.getItem("fastTriggerBias") || fastTriggerBiasInput.value;
+  const fastRampBiasInput = document.getElementById("fastRampBias");
+  fastRampBiasInput.value = localStorage.getItem("fastRampBias") || fastRampBiasInput.value;
 
   // 100.76.9.53 or hotspot ip etc
   let BASE_URL = document.getElementById("url").value;
@@ -213,13 +219,15 @@ The change is localized – just UI elements + a couple of lines in the control 
   const getCrossfadeMs = () => parseFloat(crossfadeMsInput.value) || 0;
   const getStartupBuffer = () => parseInt(startupBufferInput.value) || 0;
   const getRestartTimeoutMs = () => (parseFloat(restartTimeoutInput.value) || 4) * 1000;
-  const getFastBias = () => parseFloat(fastBiasInput.value) || 1.0;
-  const getSlowBias = () => parseFloat(slowBiasInput.value) || 1.0;
+  const getSlowTriggerBias = () => parseFloat(slowTriggerBiasInput.value) || 1.0;
+  const getSlowRampBias = () => parseFloat(slowRampBiasInput.value) || 1.0;
+  const getFastTriggerBias = () => parseFloat(fastTriggerBiasInput.value) || 1.0;
+  const getFastRampBias = () => parseFloat(fastRampBiasInput.value) || 1.0;
 
   // ---- log ring buffer ----
   const LOG_RING_SIZE = 5000;
   let logRing = [];
-  let logDirty = false; // true when logRing has changed since last DOM flush
+  let logDirty = false;
 
   function pad(n, len = 2) { return String(n).padStart(len, "0"); }
 
@@ -231,21 +239,14 @@ The change is localized – just UI elements + a couple of lines in the control 
   function log(...args) {
     const text = args.map(arg => {
       if (typeof arg === "string") return arg;
-      try {
-        return JSON.stringify(arg);
-      } catch {
-        try {
-          return String(arg);
-        } catch {
-          return "[Unprintable]";
-        }
-      }
+      try { return JSON.stringify(arg); }
+      catch { try { return String(arg); } catch { return "[Unprintable]"; } }
     }).join(" -- ");
 
     console.log(...args);
 
     const now = new Date();
-    const epochMicros = Math.round(now.getTime() * 1000); // ms -> us (JS has ms precision only)
+    const epochMicros = Math.round(now.getTime() * 1000);
     const line = `${humanTimestamp(now)} ${text} [${epochMicros}]`;
 
     logRing.push(line);
@@ -255,8 +256,6 @@ The change is localized – just UI elements + a couple of lines in the control 
     flushLogToDom();
   }
 
-  // only touches the textarea DOM when it's actually visible, so hidden logs
-  // don't cost layout/paint. Called again when "show log" is pressed.
   function flushLogToDom() {
     const logEl = document.getElementById("log");
     if (logEl.style.display === "none" || !logDirty) return;
@@ -276,7 +275,6 @@ The change is localized – just UI elements + a couple of lines in the control 
     }
   }
 
-  // logI: last-2-lines "important" status display, always visible, no history kept
   let logILines = [];
   function logI(text) {
     logILines.push(text);
@@ -302,21 +300,14 @@ The change is localized – just UI elements + a couple of lines in the control 
     return data;
   }
 
-  async function getStatusInfoFn(fn = function () { }) {
-    return getApi(fn);
-  }
-
   function findStatusById(segments, id) {
     return segments.find(s => s.id === id)?.status;
   }
 
   async function getNextValidNumber(currentNumber) {
     const { segments } = await getApi();
-
     let next = currentNumber + 1;
-
     while (findStatusById(segments, next) === "dead") next++;
-
     return findStatusById(segments, next) === "ready" ? next : null;
   }
 
@@ -324,7 +315,6 @@ The change is localized – just UI elements + a couple of lines in the control 
     log('getLatestNumber called, curr is : ', currentVideoHandle?.currtlyPlayingVideoNumber);
     const data = await getApi();
     const segments = Array.isArray(data?.segments) ? data.segments : [];
-
     return segments.length
       ? Math.max(...segments.map(s => Number(s?.id) || -1))
       : -1;
@@ -332,8 +322,45 @@ The change is localized – just UI elements + a couple of lines in the control 
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  // carryRate: the rate the *previous* segment was actually running at when it
-  // ended. Passed in so the new segment starts there instead of snapping to 1x.
+  function segmentUrl(number) {
+    return `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
+  }
+
+  ////////////////////////////////////////////////////////////////////////
+  // loadIntoElement: THE single reusable "get segment N ready on this
+  // exact <video> element" function. Both the live-swap path (playVideo)
+  // and the buffering path (bufferNext) call this SAME function, so
+  // there's one place that knows how to load a segment, not two versions
+  // that can silently drift apart. Resolves once the element is actually
+  // ready to play (readyState based -- doesn't rely on oncanplay possibly
+  // having already fired before we started listening).
+  ////////////////////////////////////////////////////////////////////////
+  function loadIntoElement(el, number) {
+    return new Promise(resolve => {
+      el.src = segmentUrl(number);
+      el.load();
+
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearInterval(pollId);
+        resolve();
+      };
+
+      el.oncanplay = finish;
+      const pollId = setInterval(() => {
+        if (el.readyState >= 3) finish(); // HAVE_FUTURE_DATA or better
+      }, 50);
+    });
+  }
+
+  // bufferedNext: { number, video } where video is one of vids[0]/vids[1]
+  // that already has segment `number` loaded via loadIntoElement.
+  let bufferedNext = null;
+
+  // carryRate: the rate the *previous* segment was actually running at when
+  // it ended. Passed in so the new segment starts there instead of 1x.
   function playVideo(number, carryRate = 1) {
     log(`Playing video segment ${number}`, currentVideoHandle, 'carryRate=', carryRate);
     logI(`Playing segment ${number}`);
@@ -341,13 +368,24 @@ The change is localized – just UI elements + a couple of lines in the control 
     const idleIdx = 1 - activeIdx;
     const idle = vids[idleIdx];
     const active = vids[activeIdx];
-
     const crossfadeMs = getCrossfadeMs();
 
-    idle.src = `${BASE_URL}/segment/segment_${String(number).padStart(6, "0")}.mp4`;
-    // start at the rate we left off at, not 1x — avoids the hard reset/stutter
-    // at every swap. (.src assignment can itself reset playbackRate on some
-    // browsers, so we also re-apply it in doSwap right before play().)
+    // reuse the buffered load if it's sitting in the right slot already,
+    // otherwise start a fresh load -- same function either way.
+    const alreadyBuffered = bufferedNext && bufferedNext.number === number && bufferedNext.video === idle;
+    if (bufferedNext && !alreadyBuffered) {
+      log('dropping stale bufferedNext', bufferedNext.number, 'wanted', number);
+      bufferedNext = null;
+    }
+    let loadPromise;
+    if (alreadyBuffered) {
+      log("Using buffered video", number);
+      bufferedNext = null;
+      loadPromise = Promise.resolve();
+    } else {
+      loadPromise = loadIntoElement(idle, number);
+    }
+
     idle.playbackRate = carryRate;
 
     if (crossfadeMs > 0) {
@@ -363,11 +401,12 @@ The change is localized – just UI elements + a couple of lines in the control 
     const doSwap = () => {
       if (swapped) return;
       swapped = true;
-      idle.playbackRate = carryRate; // re-assert in case .src reset it
-      idle.play();
+      idle.currentTime = 0; // reused elements can have stale currentTime; force reset
+      idle.playbackRate = carryRate;
+      const p = idle.play();
+      if (p && p.catch) p.catch(e => log('play() rejected', String(e)));
 
       if (crossfadeMs > 0) {
-        // fade idle in, active out, over crossfadeMs, then hide active
         active.style.transition = `opacity ${crossfadeMs}ms linear`;
         idle.style.display = "";
         requestAnimationFrame(() => {
@@ -377,7 +416,7 @@ The change is localized – just UI elements + a couple of lines in the control 
         setTimeout(() => {
           active.style.display = "none";
           active.pause();
-          active.style.opacity = 1; // reset for its next use
+          active.style.opacity = 1;
         }, crossfadeMs);
       } else {
         idle.style.display = "";
@@ -389,7 +428,7 @@ The change is localized – just UI elements + a couple of lines in the control 
       startRamp();
     };
 
-    idle.oncanplay = doSwap;
+    loadPromise.then(doSwap);
     setTimeout(doSwap, Number(swapTimeoutInput.value) || 1000);
 
     function startRamp() {
@@ -400,9 +439,7 @@ The change is localized – just UI elements + a couple of lines in the control 
           idle.playbackRate = targetRate;
           return;
         }
-        idle.playbackRate = rate < targetRate
-          ? rate + step
-          : rate - step;
+        idle.playbackRate = rate < targetRate ? rate + step : rate - step;
         updateActualRateStat(idle.playbackRate);
       }, getRampInterval());
     }
@@ -410,8 +447,6 @@ The change is localized – just UI elements + a couple of lines in the control 
     const promiseHandle = new Promise(resolve => {
       idle.onended = () => {
         clearInterval(rampTimerId);
-        // hand off the rate this segment actually ended at, so the next
-        // playVideo() call can carry it forward instead of resetting to 1x
         resolve(idle.playbackRate);
       };
     });
@@ -420,14 +455,18 @@ The change is localized – just UI elements + a couple of lines in the control 
       currtlyPlayingVideoNumber: number,
       promiseHandle,
       video: idle,
-      // now just sets a target; playVideo's own ramp loop eases toward it
-      setSpeed(rate) {
-        targetRate = rate;
-      },
-      // lets external code read "what rate is this segment on right now"
-      // without waiting for onended (used defensively, not required for the fix)
-      getCurrentRate() {
-        return idle.playbackRate;
+      setSpeed(rate) { targetRate = rate; },
+      getCurrentRate() { return idle.playbackRate; },
+      // Buffer segment `number` into the slot that will be free for the
+      // NEXT swap. Right now `idle` (this handle's own video) is about to
+      // become active; `active` (today's active) is what's about to be
+      // freed once this segment finishes -- so that's the slot to preload
+      // into. Reuses loadIntoElement, same as playVideo does.
+      async bufferNext(number) {
+        const freeSoonEl = active; // becomes idle once THIS segment ends
+        await loadIntoElement(freeSoonEl, number);
+        bufferedNext = { number, video: freeSoonEl };
+        log('buffered segment', number, 'into slot');
       }
     };
   }
@@ -436,13 +475,6 @@ The change is localized – just UI elements + a couple of lines in the control 
   // MAIN LOOP
   ////////////////////
 
-  // urgency: 0 = just started the segment, plenty of time left.
-  //          1 = segment is basically over, about to starve.
-  // deliberately NOT using video.duration here -- it's unreliable right after
-  // a .src swap (can be NaN until metadata loads) and we don't need it: we
-  // already know how long a segment is supposed to be (configurable now via
-  // the "segment duration" input). clamped because currentTime can overshoot
-  // the constant by a hair right at the end.
   function getUrgency(video) {
     const segDur = getSegmentDuration();
     const remaining = segDur - video.currentTime;
@@ -450,16 +482,10 @@ The change is localized – just UI elements + a couple of lines in the control 
     return Math.min(1, Math.max(0, urgency));
   }
 
-  // linear interpolation, nothing fancy
   function lerp(a, b, t) {
     return a + (b - a) * t;
   }
 
-  // urgency -> target playback rate, for the "next segment not ready yet" case.
-  // curve is now selectable in the UI:
-  //   linear:    straight line from 1x down to minRate
-  //   quadratic: stays closer to 1x early, then drops faster near the end
-  //   lateOnly:  stays pinned at 1x until 50% through the segment, then ramps
   function urgencyToRate(urgency, minRate, curve) {
     let t = urgency;
     if (curve === "quadratic") {
@@ -470,20 +496,6 @@ The change is localized – just UI elements + a couple of lines in the control 
     return lerp(1, minRate, t);
   }
 
-  // Why this exists: playVideo's ramp loop only smooths the *achieved*
-  // playbackRate toward whatever target it's given -- but setSpeed() itself
-  // was a hard assignment. So if "ready" flips on/off a couple times within
-  // one segment (which it does -- see the log, segments arrive irregularly),
-  // the target itself was snapping 1 -> 4 -> 0.4 -> 4 etc every single poll.
-  // The ramp then just chases whichever way the wind last blew, reversing
-  // direction constantly. That's the "snaps like crazy" symptom -- it's not
-  // a race condition, so a lock wouldn't touch it. It's a missing low-pass
-  // filter on the target itself, one level up from the existing ramp.
-  //
-  // smoothedTarget is a second, slower-moving target that sits between the
-  // raw desired rate (which can still jump instantly) and setSpeed (which
-  // now only ever receives the smoothed value). "target smoothing step" in
-  // the UI controls how fast this can move -- larger = snappier.
   let smoothedTarget = 1;
   let lastNewSegmentSeenAt = Date.now();
   let lastKnownLatest = -1;
@@ -495,7 +507,6 @@ The change is localized – just UI elements + a couple of lines in the control 
   async function slowOrSpeedUpVideo() {
     const { segments } = await getApi();
 
-    // stall tracking: has a new segment id appeared recently?
     const maxId = segments.length ? Math.max(...segments.map(s => Number(s.id) || -1)) : -1;
     if (maxId > lastKnownLatest) {
       lastKnownLatest = maxId;
@@ -506,7 +517,7 @@ The change is localized – just UI elements + a couple of lines in the control 
 
     if (autoRestartInput.checked && stallMs > getRestartTimeoutMs()) {
       document.getElementById("stallStatus").textContent = "STALLED -> restarting server...";
-      lastNewSegmentSeenAt = Date.now(); // avoid double-fire while restart is in flight
+      lastNewSegmentSeenAt = Date.now();
       restartServer();
     } else {
       document.getElementById("stallStatus").textContent = "";
@@ -521,44 +532,35 @@ The change is localized – just UI elements + a couple of lines in the control 
 
     let desiredRate;
     if (ready) {
-      // next segment is sitting there ready to go -- no point holding back,
-      // we WANT to ramp up to eat through any buffer we built up. but this
-      // desire still has to pass through the smoothing step below before it
-      // reaches setSpeed.
-      desiredRate = getMaxRate();
-      logD(`Next segment ${next} is ready, desired rate ${desiredRate}`);
-    }
-    else {
-      // next isn't ready. don't panic immediately -- only slow down as much
-      // as the remaining time in *this* segment actually demands.
-      desiredRate = urgencyToRate(urgency, getMinRate(), curve);
-      logD(`Next segment ${next} is not ready, urgency=${urgency.toFixed(2)}, desired rate=${desiredRate.toFixed(2)}`);
-    }
-
-    // ---- apply fast/slow bias to the desired rate ----
-    // fastBias multiplies the amount of speed-up (desired - 1) when > 1.
-    // slowBias multiplies the amount of slow-down (1 - desired) when < 1.
-    const fastBias = getFastBias();
-    const slowBias = getSlowBias();
-    if (desiredRate > 1.0) {
-      desiredRate = 1.0 + (desiredRate - 1.0) * fastBias;
-    } else if (desiredRate < 1.0) {
-      desiredRate = 1.0 - (1.0 - desiredRate) * slowBias;
+      // next is ready -- fastTriggerBias controls how eagerly we ask for
+      // speed-up right away (< 1 = ease in, don't slam to maxRate).
+      const fastTriggerBias = getFastTriggerBias();
+      const maxRate = getMaxRate();
+      desiredRate = 1.0 + (maxRate - 1.0) * fastTriggerBias;
+      logD(`Next segment ${next} is ready, desired rate ${desiredRate.toFixed(2)} (fastTriggerBias=${fastTriggerBias})`);
+    } else {
+      // next not ready -- slowTriggerBias warps urgency so slow-down
+      // triggers earlier (>1) in the segment.
+      const slowTriggerBias = getSlowTriggerBias();
+      const biasedUrgency = Math.min(1, urgency * slowTriggerBias);
+      desiredRate = urgencyToRate(biasedUrgency, getMinRate(), curve);
+      logD(`Next segment ${next} is not ready, urgency=${urgency.toFixed(2)} (biased ${biasedUrgency.toFixed(2)}), desired rate=${desiredRate.toFixed(2)}`);
     }
 
-    // low-pass filter: smoothedTarget can only move targetSmoothingStep
-    // per tick toward desiredRate, regardless of how far desiredRate jumped.
-    const smoothStep = getTargetSmoothingStep();
+    // ramp bias: how fast smoothedTarget chases desiredRate, split by direction
+    const baseSmoothStep = getTargetSmoothingStep();
+    const movingDown = desiredRate < smoothedTarget;
+    const smoothStep = baseSmoothStep * (movingDown ? getSlowRampBias() : getFastRampBias());
+
     if (Math.abs(smoothedTarget - desiredRate) < smoothStep) {
       smoothedTarget = desiredRate;
     } else {
-      smoothedTarget += smoothedTarget < desiredRate ? smoothStep : -smoothStep;
+      smoothedTarget += movingDown ? -smoothStep : smoothStep;
     }
 
     logI(`Speed target: ${smoothedTarget.toFixed(2)}x (desired ${desiredRate.toFixed(2)}x, urgency ${(urgency * 100).toFixed(0)}%)`);
     currentVideoHandle.setSpeed(smoothedTarget);
 
-    // ---- live status table ----
     document.getElementById("statProgress").textContent = `${(urgency * 100).toFixed(0)}% through segment`;
     document.getElementById("statUrgency").textContent = urgency.toFixed(3);
     document.getElementById("statReady").textContent = ready ? `yes (segment ${next})` : `no (waiting on ${next})`;
@@ -569,10 +571,6 @@ The change is localized – just UI elements + a couple of lines in the control 
   async function startSetintervalLoopSlowdown(currentVideoHandle) {
     const staleSafePromiseVideoHandle = currentVideoHandle.promiseHandle;
     const id = setInterval(() => slowOrSpeedUpVideo(currentVideoHandle), getPollInterval());
-    // can be timing issue if next video its changed to ready before the interval is cleared, 
-    // but its not a big deal as small local, fix if needed is inside the 
-    // slowOrSpeedUpVideo function to check if the currentVideoHandle 
-    // is still the same as the one passed in, after that getApi line.
     return staleSafePromiseVideoHandle.finally(() => clearInterval(id));
   }
 
@@ -581,12 +579,11 @@ The change is localized – just UI elements + a couple of lines in the control 
     const buffer = getStartupBuffer();
     const startNumber = Math.max(-1, frontierLatestVideoNumber - buffer);
     log('got frontierLatestVideoNumber as', frontierLatestVideoNumber, 'starting from', startNumber, '(buffer=', buffer, ')');
-    // this is only one initialisation place, else undefined.
     currentVideoHandle = { currtlyPlayingVideoNumber: startNumber };
     lastKnownLatest = frontierLatestVideoNumber;
     lastNewSegmentSeenAt = Date.now();
 
-    let carryRate = 1; // first segment ever: no prior rate to carry, start at 1x
+    let carryRate = 1;
 
     async function loopUntilgetNextValidNumber() {
       const nextValidNumber = await getNextValidNumber(currentVideoHandle.currtlyPlayingVideoNumber);
@@ -599,16 +596,13 @@ The change is localized – just UI elements + a couple of lines in the control 
     }
 
     while (1) {
-
       const nextValidNumber = await loopUntilgetNextValidNumber();
       currentVideoHandle = playVideo(nextValidNumber, carryRate);
 
       startSetintervalLoopSlowdown(currentVideoHandle);
       const nextValidBufferedNumber = await loopUntilgetNextValidNumber();
       log('next valid number is', nextValidBufferedNumber, 'current is', currentVideoHandle.currtlyPlayingVideoNumber, 'waiting for current to end...');
-      currentVideHandle.setBufferedNext(nextValidBufferedNumber);
-      // promiseHandle now resolves with the rate the segment ended at;
-      // that becomes next segment's starting rate
+      currentVideoHandle.bufferNext(nextValidBufferedNumber);
       carryRate = await currentVideoHandle.promiseHandle;
     }
   }
@@ -656,4 +650,3 @@ The change is localized – just UI elements + a couple of lines in the control 
 </script>
 
 </html>
-```
